@@ -1,0 +1,10 @@
+#!/command/with-contenv bashio
+# shellcheck shell=bash
+
+export AIRSUPPLY_LOG_LEVEL="$(bashio::config 'log_level')"
+export AIRSUPPLY_ADDRESS="$(bashio::config 'address')"
+export AIRSUPPLY_CONNECT="$(bashio::config 'connect')"
+
+bashio::log.info "airsupply ${BUILD_VERSION:-dev} starting."
+
+exec python3 -m airsupply

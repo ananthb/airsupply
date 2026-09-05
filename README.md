@@ -7,10 +7,12 @@ lets you export none of it. This repo is the two consumers that fix that: a
 Home Assistant add-on that keeps the long-term record at home, and a phone app
 that can push to Home Assistant, Health Connect and Apple Health.
 
-**Status: nothing works yet.** The repo exists, the transport is understood, and
-the protocol comes from [libairmini](#the-protocol-is-not-ours). No code has run
-against a machine from here. See [`docs/verify.md`](docs/verify.md) for the
-first experiment, which decides whether the add-on is possible at all.
+**Status: nothing is monitored yet.** The transport is understood and the
+protocol comes from [libairmini](#the-protocol-is-not-ours), but no code here
+has yet read a byte from a machine. What exists is a Home Assistant add-on that
+runs the first experiments on your own hardware — can the host see the machine,
+and does the serial channel open — and stops there. See
+[`docs/verify.md`](docs/verify.md) for the full order.
 
 ## It is not a BLE device
 
@@ -63,9 +65,15 @@ belongs upstream, in C, under libairmini's BSD-2 — not here.
 | | |
 |---|---|
 | `docs/protocol.md` | the transport, and what is known versus assumed |
-| `docs/verify.md` | experiments to run against a real machine, in order |
+| `docs/verify.md` | experiments against a real machine, in order, with results |
+| `airsupply/` | the Home Assistant add-on — **a diagnostic, not a monitor** |
 
-The add-on and the app arrive once `docs/verify.md` says they can.
+The add-on exists to answer two of those experiments on your own hardware:
+whether the Home Assistant host can see the machine at all, and whether the
+serial channel opens. It reads nothing and writes nothing. See
+[`airsupply/DOCS.md`](airsupply/DOCS.md).
+
+The phone app arrives once `docs/verify.md` says it can.
 
 ## Licence
 
