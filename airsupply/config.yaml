@@ -1,7 +1,7 @@
 name: airsupply
 version: "0.0.1"
 slug: airsupply
-description: "Read a ResMed AirMini CPAP over Bluetooth Classic. Currently a diagnostic only -- it reports what BlueZ can see and, on request, tries to open the serial channel."
+description: "Read a ResMed AirMini CPAP over Bluetooth Classic. Surveys what BlueZ can see, opens the serial channel, and reproduces libairmini's verified reads. No writes."
 url: "https://github.com/ananthb/airsupply"
 arch:
   - aarch64
@@ -33,6 +33,8 @@ options:
   log_level: info
   address: ""
   connect: false
+  read: false
+  pin: ""
 
 schema:
   log_level: "list(debug|info|warning|error)"
@@ -40,3 +42,9 @@ schema:
   address: "str?"
   # Attempt to open the serial channel. Leave false until the survey looks right.
   connect: "bool"
+  # Handshake and read. Implies connect.
+  read: "bool"
+  # The number the machine shows in pairing mode. Needed exactly once: the
+  # pairing key it buys is kept in /data and used from then on. Clear it
+  # afterwards -- `password` keeps it out of the log, not out of a backup.
+  pin: "password?"

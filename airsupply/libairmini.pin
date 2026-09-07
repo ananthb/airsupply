@@ -1,0 +1,9 @@
+# The libairmini revision airsupply builds against.
+#
+# Pinned by commit rather than tracked, because this is the protocol
+# implementation for a medical device: a build that silently picks up new
+# framing or a changed handshake is not something to discover at 3am.
+#
+# Bumping it is a one-line diff, and the diff is the review.
+LIBAIRMINI_REPO=https://github.com/psychoticbeef/libairmini
+LIBAIRMINI_REF=45742cca83c6cb64b69c120ad0a457edbc63a19d

@@ -9,9 +9,10 @@ that can push to Home Assistant, Health Connect and Apple Health.
 
 **Status: nothing is monitored yet.** The transport is understood and the
 protocol comes from [libairmini](#the-protocol-is-not-ours), but no code here
-has yet read a byte from a machine. What exists is a Home Assistant add-on that
-runs the first experiments on your own hardware — can the host see the machine,
-and does the serial channel open — and stops there. See
+has yet read a byte from a real machine. What exists is a Home Assistant add-on
+that runs the first experiments on your own hardware — can the host see the
+machine, does the serial channel open, does pairing complete, and do the four
+basic reads come back — and reports what it finds. It writes nothing. See
 [`docs/verify.md`](docs/verify.md) for the full order.
 
 ## It is not a BLE device
@@ -68,10 +69,11 @@ belongs upstream, in C, under libairmini's BSD-2 — not here.
 | `docs/verify.md` | experiments against a real machine, in order, with results |
 | `airsupply/` | the Home Assistant add-on — **a diagnostic, not a monitor** |
 
-The add-on exists to answer two of those experiments on your own hardware:
-whether the Home Assistant host can see the machine at all, and whether the
-serial channel opens. It reads nothing and writes nothing. See
-[`airsupply/DOCS.md`](airsupply/DOCS.md).
+The add-on exists to answer experiments 1, 3 and 5 on your own hardware:
+whether the Home Assistant host can see the machine, whether the serial channel
+opens and the SRP-6a pairing completes, and whether the version, clock, settings
+and run-meter reads reproduce. It writes nothing, and refuses to: `Set` is not
+among the methods it will send. See [`airsupply/DOCS.md`](airsupply/DOCS.md).
 
 The phone app arrives once `docs/verify.md` says it can.
 
@@ -79,5 +81,6 @@ The phone app arrives once `docs/verify.md` says it can.
 
 GPL-3.0-only. See [`LICENSE`](LICENSE).
 
-Vendored libairmini sources, when they land under `vendor/`, stay BSD-2-Clause
-with their copyright notice retained.
+libairmini is not vendored. The add-on builds it from the commit named in
+[`airsupply/libairmini.pin`](airsupply/libairmini.pin), so it stays BSD-2-Clause
+in its own repository and a bump here is a one-line diff.

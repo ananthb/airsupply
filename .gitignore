@@ -1,5 +1,4 @@
 /build/
-/vendor/libairmini/
 __pycache__/
 *.pyc
 .venv/

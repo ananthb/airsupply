@@ -32,7 +32,7 @@ class SerialProfile(ServiceInterface):
 
     def __init__(self):
         super().__init__(c.PROFILE)
-        self.connected = asyncio.get_event_loop().create_future()
+        self.connected = asyncio.get_running_loop().create_future()
 
     @method()
     def NewConnection(self, device: "o", fd: "h", fd_properties: "a{sv}"):  # noqa: N802
