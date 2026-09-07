@@ -84,7 +84,7 @@ ENV PYTHONPATH="/usr/src" \
 # image's libcrypto or the Python side does not import.
 RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
-    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web, airsupply.views'
+    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web, airsupply.views' \
     && test -s /usr/src/airsupply/static/htmx.min.js
 
 ARG BUILD_VERSION=dev
