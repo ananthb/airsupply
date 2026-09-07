@@ -9,7 +9,7 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21
 
 # ---------------------------------------------------------------------------
-# Stage 1: build libairmini.
+# Stage 1: build libairmini, and fetch the one front-end dependency.
 #
 # libairmini is BSD-2 C that owns the AirMini protocol -- framing, SRP-6a
 # pairing, the AES-256-CBC session. We consume it rather than reimplement it,
@@ -42,6 +42,15 @@ RUN . /tmp/libairmini.pin \
     && ctest --test-dir /build --output-on-failure \
     && install -D /build/libairmini.so /out/usr/lib/libairmini.so
 
+# htmx is the whole front end: the page is server-rendered HTML that htmx
+# polls and swaps. Pinned by version and checksum, fetched here rather than
+# committed, so the repository carries no minified blob. 0BSD licence.
+ARG HTMX_VERSION=4.0.0
+ARG HTMX_SHA256=e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f
+RUN curl -fsSL "https://raw.githubusercontent.com/bigskysoftware/htmx/v${HTMX_VERSION}/dist/htmx.min.js" \
+       -o /out/htmx.min.js \
+    && echo "${HTMX_SHA256}  /out/htmx.min.js" | sha256sum -c -
+
 # ---------------------------------------------------------------------------
 # Stage 2: the runtime.
 # ---------------------------------------------------------------------------
@@ -66,6 +75,7 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
     && rm /tmp/requirements.txt
 
 COPY src/ /usr/src/
+COPY --from=libairmini /out/htmx.min.js /usr/src/airsupply/static/htmx.min.js
 
 ENV PYTHONPATH="/usr/src" \
     PYTHONUNBUFFERED="1"
@@ -74,7 +84,8 @@ ENV PYTHONPATH="/usr/src" \
 # image's libcrypto or the Python side does not import.
 RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
-    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web'
+    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web, airsupply.views'
+    && test -s /usr/src/airsupply/static/htmx.min.js
 
 ARG BUILD_VERSION=dev
 ENV AIRSUPPLY_VERSION="${BUILD_VERSION}"
