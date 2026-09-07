@@ -56,12 +56,14 @@ jobs:
             BUILD_VERSION=${{ github.ref_name }}
           outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
 
+      # The digest goes in the file, not in its name: artifact paths may not
+      # contain a colon, and every digest starts with "sha256:".
       - name: Record digest
         run: |
           mkdir -p digests
-          touch "digests/${{ steps.build.outputs.digest }}"
+          echo "${{ steps.build.outputs.digest }}" > "digests/${{ matrix.arch }}"
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: digest-${{ matrix.arch }}
           path: digests/*
@@ -74,7 +76,7 @@ jobs:
       contents: read
       packages: write
     steps:
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: digests
           pattern: digest-*
@@ -91,8 +93,8 @@ jobs:
         run: |
           set -euo pipefail
           refs=()
-          for digest in *; do
-            refs+=("${IMAGE}@${digest}")
+          for arch in *; do
+            refs+=("${IMAGE}@$(cat "${arch}")")
           done
           docker buildx imagetools create \
             -t "${IMAGE}:${{ github.ref_name }}" \
