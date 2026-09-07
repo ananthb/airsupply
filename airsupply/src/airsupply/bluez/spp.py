@@ -32,6 +32,11 @@ class SerialProfile(ServiceInterface):
 
     def __init__(self):
         super().__init__(c.PROFILE)
+        self.connected = None
+        self.reset()
+
+    def reset(self):
+        """Arm for the next connection. One future per ConnectProfile."""
         self.connected = asyncio.get_running_loop().create_future()
 
     @method()
@@ -41,6 +46,9 @@ class SerialProfile(ServiceInterface):
         log.info("  fd %s, properties %s", fd, props)
         if not self.connected.done():
             self.connected.set_result((device, fd, props))
+        else:
+            # Nobody is waiting; do not leak the descriptor.
+            close(fd)
 
     @method()
     def RequestDisconnection(self, device: "o"):  # noqa: N802
@@ -89,13 +97,13 @@ async def connect(bus, device_path, profile, timeout=30.0):
 
     if not await device.get_paired():
         log.error(
-            "Device is not paired. The Bluetooth Classic bond has to exist "
-            "before the serial channel will open, and it is separate from "
-            "libairmini's SRP-6a pairing. Pair it once from the host: "
-            "`bluetoothctl` then `pair <address>`."
+            "Device is not bonded. The Bluetooth bond has to exist before the "
+            "serial channel will open, and it is separate from the machine's "
+            "own PIN pairing. Do the Bluetooth step on the page first."
         )
         return None
 
+    profile.reset()
     log.info("Connecting serial profile...")
     try:
         await device.call_connect_profile(c.SPP_UUID)

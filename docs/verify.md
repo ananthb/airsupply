@@ -100,16 +100,18 @@ Two separate pairings are involved and it is easy to conflate them: the
 Bluetooth Classic bond at the link layer, and libairmini's SRP-6a pairing at the
 application layer using the PIN on the device.
 
-**The add-on runs this one.** With `connect: true` it asks BlueZ for the SPP
-file descriptor; with `read: true` and a `pin` it runs the SRP-6a handshake,
-stores the resulting `masterPairKey` under `/data`, and on every later start
-reconnects with that key and no PIN. See the add-on's
-[DOCS.md](https://github.com/ananthb/hass-addons/blob/main/airsupply/DOCS.md),
-steps 2 and 3.
+**The add-on runs this one, from its page.** It registers a BlueZ pairing
+agent and calls `Device1.Pair` itself, so the link-layer bond no longer needs
+a shell on the host; whatever BlueZ asks -- a PIN, a passkey to confirm -- is
+shown on the page. Then it asks BlueZ for the SPP file descriptor, runs the
+SRP-6a handshake with the PIN typed on the page, stores the resulting
+`masterPairKey` under `/data`, and on every later start reconnects with that
+key and no PIN. See the add-on's
+[DOCS.md](https://github.com/ananthb/hass-addons/blob/main/airsupply/DOCS.md).
 
-- [ ] Does the machine require a link-layer bond before it will accept RFCOMM?
-      (The add-on assumes yes and asks for `bluetoothctl pair` first. If
-      `ConnectProfile` works without it, note that here.)
+- [ ] Which link-layer question does the machine ask -- legacy PIN
+      (`RequestPinCode`), passkey confirmation, or none (just-works)? Record
+      what the page showed.
 - [ ] Does SRP-6a pairing complete, and is a `masterPairKey` returned?
 - [ ] Does a later no-PIN reconnect work with that key?
 
@@ -126,7 +128,7 @@ one process must own the machine and serve everything else.
 libairmini reports these verified. Confirming them here proves the whole stack —
 transport, framing, crypto backend, session — before anything is written.
 
-**The add-on runs the first four** (`read: true`) and reports each separately,
+**The add-on runs the first four** from its page and reports each separately,
 so a partial result is still a result. Paste its log here with serial numbers
 removed.
 
