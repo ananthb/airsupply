@@ -74,7 +74,7 @@ ENV PYTHONPATH="/usr/src" \
 # image's libcrypto or the Python side does not import.
 RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
-    && python3 -c 'import dbus_next, airsupply.airmini, airsupply.bluez'
+    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web'
 
 ARG BUILD_VERSION=dev
 ENV AIRSUPPLY_VERSION="${BUILD_VERSION}"
@@ -86,8 +86,9 @@ LABEL \
     org.opencontainers.image.licenses="GPL-3.0-only" \
     org.opencontainers.image.version="${BUILD_VERSION}"
 
-# Configuration is environment: AIRSUPPLY_LOG_LEVEL, AIRSUPPLY_ADDRESS,
-# AIRSUPPLY_CONNECT, AIRSUPPLY_READ, AIRSUPPLY_PIN. The base image's /init
-# runs this once s6 is up; outside Home Assistant, mount the host's
-# /run/dbus/system_bus_socket and set the variables by hand.
+# Configuration is environment: AIRSUPPLY_LOG_LEVEL and AIRSUPPLY_PORT. The
+# page is on that port; under Home Assistant it is reached through ingress.
+# Outside Home Assistant, mount the host's /run/dbus/system_bus_socket and
+# publish the port by hand.
+EXPOSE 8099
 CMD ["python3", "-m", "airsupply"]

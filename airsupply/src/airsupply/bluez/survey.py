@@ -26,7 +26,7 @@ async def managed_objects(bus):
     return await manager.call_get_managed_objects()
 
 
-def _looks_like_airmini(device):
+def looks_like_airmini(device):
     name = f"{device.get('Name', '')} {device.get('Alias', '')}".lower()
     if any(hint in name for hint in c.NAME_HINTS):
         return True
@@ -74,7 +74,7 @@ async def survey(bus):
 
     log.info("Devices known to BlueZ: %d", len(devices))
 
-    candidates = [(p, d) for p, d in devices.items() if _looks_like_airmini(d)]
+    candidates = [(p, d) for p, d in devices.items() if looks_like_airmini(d)]
     if not candidates:
         log.warning(
             "No AirMini-shaped device found. Put the machine into pairing mode "
