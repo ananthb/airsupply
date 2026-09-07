@@ -81,7 +81,7 @@ through finding the machine, bonding with it, pairing and reading. See the
 | `airsupply/` | the container image behind the Home Assistant add-on — **a diagnostic, not a monitor** |
 
 `airsupply/` builds libairmini from the commit in `libairmini.pin`, wraps it
-for Python, serves the page, and is published as
+for Python, serves the page (server-rendered, driven by [htmx](https://htmx.org)), and is published as
 `ghcr.io/ananthb/airsupply:v<version>` on every `v*` tag. The add-on in
 hass-addons is that image plus a run script and an AppArmor profile. It
 exists to answer experiments 1, 3 and 5 on your own hardware: whether the
