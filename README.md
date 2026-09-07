@@ -61,19 +61,33 @@ libairmini (C, BSD-2)
 carefully-verified pass"*: the `Set` / configuration write path. That work
 belongs upstream, in C, under libairmini's BSD-2 — not here.
 
+## Install
+
+[![Add repository to your Home Assistant instance](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fananthb%2Fhass-addons)
+
+The add-on is packaged in [ananthb/hass-addons](https://github.com/ananthb/hass-addons).
+Add `https://github.com/ananthb/hass-addons` as an add-on repository
+(**Settings → Add-ons → Add-on Store → ⋮ → Repositories**), then install
+**airsupply**. See the
+[add-on docs](https://github.com/ananthb/hass-addons/blob/main/airsupply/DOCS.md)
+for the three steps it walks you through.
+
 ## Layout
 
 | | |
 |---|---|
 | `docs/protocol.md` | the transport, and what is known versus assumed |
 | `docs/verify.md` | experiments against a real machine, in order, with results |
-| `airsupply/` | the Home Assistant add-on — **a diagnostic, not a monitor** |
+| `airsupply/` | the container image behind the Home Assistant add-on — **a diagnostic, not a monitor** |
 
-The add-on exists to answer experiments 1, 3 and 5 on your own hardware:
-whether the Home Assistant host can see the machine, whether the serial channel
-opens and the SRP-6a pairing completes, and whether the version, clock, settings
-and run-meter reads reproduce. It writes nothing, and refuses to: `Set` is not
-among the methods it will send. See [`airsupply/DOCS.md`](airsupply/DOCS.md).
+`airsupply/` builds libairmini from the commit in `libairmini.pin`, wraps it
+for Python, and is published as `ghcr.io/ananthb/airsupply:v<version>` on
+every `v*` tag. The add-on in hass-addons is that image plus a run script, an
+AppArmor profile and the options UI. It exists to answer experiments 1, 3 and
+5 on your own hardware: whether the Home Assistant host can see the machine,
+whether the serial channel opens and the SRP-6a pairing completes, and whether
+the version, clock, settings and run-meter reads reproduce. It writes nothing,
+and refuses to: `Set` is not among the methods it will send.
 
 The phone app arrives once `docs/verify.md` says it can.
 

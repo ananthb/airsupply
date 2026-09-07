@@ -1,4 +1,12 @@
-ARG BUILD_FROM
+# The image behind the Home Assistant add-on. The add-on itself -- options,
+# AppArmor profile, the run script that turns options into environment -- is
+# packaged in ananthb/hass-addons and layers on top of this; see release.yml
+# for how it gets to ghcr.io/ananthb/airsupply.
+#
+# Built on the Home Assistant base image rather than plain Alpine so that the
+# add-on wrapper inherits s6-overlay and bashio from here, and so that the
+# musl libairmini.so built below matches the Python that loads it.
+ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21
 
 # ---------------------------------------------------------------------------
 # Stage 1: build libairmini.
@@ -35,7 +43,7 @@ RUN . /tmp/libairmini.pin \
     && install -D /build/libairmini.so /out/usr/lib/libairmini.so
 
 # ---------------------------------------------------------------------------
-# Stage 2: the add-on.
+# Stage 2: the runtime.
 # ---------------------------------------------------------------------------
 FROM ${BUILD_FROM}
 
@@ -57,20 +65,29 @@ COPY requirements.txt /tmp/
 RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt \
     && rm /tmp/requirements.txt
 
-COPY rootfs /
 COPY src/ /usr/src/
-
-# COPY through git can strip execute bits.
-RUN chmod +x /etc/cont-init.d/01-verify-dbus.sh \
-    && chmod +x /etc/s6-overlay/s6-rc.d/airsupply/run
 
 ENV PYTHONPATH="/usr/src" \
     PYTHONUNBUFFERED="1"
 
-ARG BUILD_ARCH
-ARG BUILD_VERSION
+# Fail the build, not the first start, if the .so does not load against this
+# image's libcrypto or the Python side does not import.
+RUN python3 -m compileall -q /usr/src \
+    && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
+    && python3 -c 'import dbus_next, airsupply.airmini, airsupply.bluez'
+
+ARG BUILD_VERSION=dev
+ENV AIRSUPPLY_VERSION="${BUILD_VERSION}"
+
 LABEL \
-    io.hass.name="airsupply" \
-    io.hass.type="addon" \
-    io.hass.arch="${BUILD_ARCH}" \
-    io.hass.version="${BUILD_VERSION}"
+    org.opencontainers.image.title="airsupply" \
+    org.opencontainers.image.description="Read a ResMed AirMini CPAP over Bluetooth Classic" \
+    org.opencontainers.image.source="https://github.com/ananthb/airsupply" \
+    org.opencontainers.image.licenses="GPL-3.0-only" \
+    org.opencontainers.image.version="${BUILD_VERSION}"
+
+# Configuration is environment: AIRSUPPLY_LOG_LEVEL, AIRSUPPLY_ADDRESS,
+# AIRSUPPLY_CONNECT, AIRSUPPLY_READ, AIRSUPPLY_PIN. The base image's /init
+# runs this once s6 is up; outside Home Assistant, mount the host's
+# /run/dbus/system_bus_socket and set the variables by hand.
+CMD ["python3", "-m", "airsupply"]
