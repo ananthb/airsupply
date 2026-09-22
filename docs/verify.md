@@ -109,6 +109,37 @@ SRP-6a handshake with the PIN typed on the page, stores the resulting
 key and no PIN. See the add-on's
 [DOCS.md](https://github.com/ananthb/hass-addons/blob/main/airsupply/DOCS.md).
 
+**Recorded 2026-09-22 — `Device1.Pair` returns `org.bluez.Error.ConnectionAttemptFailed:
+Page Timeout`, repeatedly.** The machine is found and selected (experiment 1
+passes), and the bond never gets as far as a question: a page timeout is the
+BR/EDR *page* going unanswered, which happens before any pairing method is
+negotiated. So this says nothing yet about what the AirMini asks.
+
+Three things have to be true at once for a page to land, and the error names
+none of them:
+
+1. **The machine has to be listening.** The AirMini is only connectable while
+   it is in pairing mode, and it leaves pairing mode on its own after a short
+   while — quite possibly while the 20-second scan is still running.
+2. **The inquiry data has to be fresh.** A controller pages using the clock
+   offset and page-scan repetition mode it learned during inquiry. BlueZ drops
+   `RSSI` once it has not heard from a device lately, and that missing RSSI is
+   the visible sign that what it holds is too stale to page with.
+3. **The adapter must not be inquiring.** Inquiry and paging are the same
+   radio, and it will not page while it is inquiring. Pressing **Bond** as soon
+   as the machine appears in the list — the obvious thing to do — pages into
+   our own still-running scan.
+
+Home Assistant's passive BLE scan is *not* a fourth: it is LE, it never
+inquires, and it keeps the adapter's `Discovering` true without blocking a
+page. The note in `survey()` that a busy adapter "does not block us" was right
+about that scan and wrong about ours.
+
+The page now covers all three — it stops our scan and lets the radio settle
+before paging, re-inquires first when `RSSI` is missing, retries three times,
+and reports what to do rather than "Page Timeout". Whether the bond then forms,
+and which question the machine asks, is still open below.
+
 - [ ] Which link-layer question does the machine ask -- legacy PIN
       (`RequestPinCode`), passkey confirmation, or none (just-works)? Record
       what the page showed.

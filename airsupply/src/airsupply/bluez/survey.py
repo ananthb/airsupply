@@ -69,7 +69,9 @@ async def survey(bus):
     if any(a.get("Discovering") for a in adapters.values()):
         log.info(
             "  (something is discovering -- almost certainly Home Assistant's "
-            "own passive BLE scan. That is fine and does not block us.)"
+            "own passive BLE scan. That one is fine: it is LE, it never "
+            "inquires, and it does not stop a BR/EDR page. Our own inquiry "
+            "does, which is why the bond stops it first.)"
         )
 
     log.info("Devices known to BlueZ: %d", len(devices))

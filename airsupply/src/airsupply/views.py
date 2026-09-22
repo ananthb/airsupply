@@ -143,9 +143,19 @@ def _bond(s):
     else:
         state = ""
     disabled = not sel or s["bonded"] or busy or not s["agent_ok"]
+    # BlueZ drops RSSI when it has not heard from a device lately, which is
+    # exactly when a page will time out. Say so before the button is pressed.
+    stale = bool(sel) and not s["bonded"] and sel["rssi"] is None
+    hint = ('<p class="muted">BlueZ has not heard from this machine lately, so the bond will '
+            'inquire once more before it tries. Put the AirMini into pairing mode first.</p>'
+            if stale else "")
     body = f"""
   <p>The link-layer pairing between the Home Assistant host and the machine. Done once.
-     BlueZ may ask for a code; it will appear here or on the machine.</p>
+     <b>Put the AirMini into pairing mode first</b> and press this within a few seconds of it
+     lighting up: it only answers a connection while it is in pairing mode.
+     Any scan of ours still running is stopped first, because the adapter will not page while
+     it is inquiring. BlueZ may ask for a code; it will appear here or on the machine.</p>
+  {hint}
   <div class="row">
     <button class="primary{' spin' if s['busy'] == 'bond' else ''}" hx-post="ui/bond"{' disabled' if disabled else ''}>Bond over Bluetooth</button>
     {state}

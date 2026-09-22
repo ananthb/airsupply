@@ -2,7 +2,7 @@
 
 import logging
 
-from dbus_next import Variant
+from dbus_next import DBusError, Variant
 
 from . import constants as c
 from .survey import looks_like_airmini, managed_objects
@@ -83,6 +83,21 @@ async def pair(bus, device_path):
     await device.call_pair()
     # Trusted lets later connections through without an authorization prompt.
     await device.set_trusted(True)
+
+
+# BlueZ reports a BR/EDR paging failure -- the machine never answered the
+# connection attempt -- as ConnectionAttemptFailed. The text is "Page Timeout"
+# on older daemons and "br-connection-page-timeout" on newer ones; both mean
+# the same thing, and both are worth another attempt.
+CONNECTION_ATTEMPT_FAILED = "org.bluez.Error.ConnectionAttemptFailed"
+
+
+def is_page_timeout(err):
+    """Did this failure come from the machine not answering the page?"""
+    if not isinstance(err, DBusError):
+        return False
+    text = (err.text or "").lower().replace("-", " ")
+    return "page timeout" in text or err.type == CONNECTION_ATTEMPT_FAILED
 
 
 async def disconnect_profile(bus, device_path):

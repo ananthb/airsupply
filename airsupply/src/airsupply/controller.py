@@ -15,6 +15,8 @@ import json
 import logging
 import time
 
+from dbus_next import DBusError
+
 from . import store
 from .bluez import adapter, agent, spp
 
@@ -24,6 +26,24 @@ SCAN_SECONDS = 20
 HANDSHAKE_TIMEOUT = 60
 READ_TIMEOUT = 30
 LOG_LINES = 300
+
+# The bond, and why it takes this much care. A BR/EDR page reaches a machine
+# that is listening for one, using inquiry data that has not gone stale, from
+# a controller that is not inquiring itself. Miss any of the three and BlueZ
+# answers ConnectionAttemptFailed: Page Timeout -- which says nothing about
+# which one it was, so the sequence covers all three before it gives up.
+REFRESH_SCAN_SECONDS = 8
+RADIO_SETTLE = 2.0
+PAIR_ATTEMPTS = 3
+PAIR_RETRY_PAUSE = 4.0
+
+PAGE_TIMEOUT_ADVICE = (
+    "The machine never answered (Page Timeout). The AirMini only accepts a "
+    "connection while it is in pairing mode, and it leaves pairing mode after "
+    "a short while -- press its Bluetooth button again and press Bond within "
+    "a few seconds of the machine lighting up. If that keeps failing, the host "
+    "is out of range: Bluetooth Classic is good for about ten metres."
+)
 
 
 class Busy(Exception):
@@ -68,6 +88,8 @@ class Controller:
         self._prompt = None
         self._last_refresh = 0.0
         self._task = None
+        self._scan_task = None
+        self._scan_stop = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -154,32 +176,49 @@ class Controller:
 
         self._task = asyncio.create_task(runner())
 
-    def scan(self):
+    def scan(self, seconds=SCAN_SECONDS):
         if self.scanning:
             return
         if not self.adapter:
             raise RuntimeError("no Bluetooth adapter is visible over D-Bus")
         self.scanning = True
+        self._scan_stop = asyncio.Event()
+        self._scan_task = asyncio.create_task(self._scan(seconds))
 
-        async def runner():
-            path = self.adapter["path"]
+    async def _scan(self, seconds):
+        path = self.adapter["path"]
+        stop = self._scan_stop
+        try:
+            await adapter.start_discovery(self.bus, path)
+            log.info("Scanning for %ds. Put the AirMini in pairing mode now.", seconds)
             try:
-                await adapter.start_discovery(self.bus, path)
-                log.info("Scanning for %ds. Put the AirMini in pairing mode now.", SCAN_SECONDS)
-                await asyncio.sleep(SCAN_SECONDS)
-            except Exception as err:  # noqa: BLE001
-                self.error = f"scan failed: {err}"
-                log.error("Scan failed: %s", err)
-            finally:
-                try:
-                    await adapter.stop_discovery(self.bus, path)
-                except Exception:  # noqa: BLE001 -- ours may already be over
-                    pass
-                self.scanning = False
-                self._last_refresh = 0.0
-                log.info("Scan finished.")
+                # Ends early if the bond step asks for the radio back.
+                await asyncio.wait_for(stop.wait(), seconds)
+            except asyncio.TimeoutError:
+                pass
+        except Exception as err:  # noqa: BLE001
+            self.error = f"scan failed: {err}"
+            log.error("Scan failed: %s", err)
+        finally:
+            try:
+                await adapter.stop_discovery(self.bus, path)
+            except Exception:  # noqa: BLE001 -- ours may already be over
+                pass
+            self.scanning = False
+            self._last_refresh = 0.0
+            log.info("Scan finished.")
 
-        asyncio.create_task(runner())
+    async def _scan_finished(self):
+        """Wait for the scan task, if any, to have stopped discovery."""
+        task = self._scan_task
+        if task is not None:
+            await task
+
+    async def stop_scan(self):
+        """Cut a running scan short and wait for the inquiry to be over."""
+        if self._scan_stop is not None:
+            self._scan_stop.set()
+        await self._scan_finished()
 
     def select(self, address):
         address = (address or "").upper()
@@ -201,12 +240,76 @@ class Controller:
             return
         if not self.agent_ok:
             raise RuntimeError("no pairing agent; see the log from start-up")
+
+        dev = await self._ready_to_page(dev)
         log.info("Bonding with %s. Watch the machine and this page for a code.", dev["address"])
-        try:
-            await adapter.pair(self.bus, dev["path"])
-        finally:
-            self.agent.clear()
+        for attempt in range(1, PAIR_ATTEMPTS + 1):
+            try:
+                await adapter.pair(self.bus, dev["path"])
+                break
+            except DBusError as err:
+                if not adapter.is_page_timeout(err):
+                    raise
+                log.warning(
+                    "Attempt %d of %d: the machine did not answer the page (%s).",
+                    attempt, PAIR_ATTEMPTS, err.text or err.type,
+                )
+                if attempt == PAIR_ATTEMPTS:
+                    raise RuntimeError(PAGE_TIMEOUT_ADVICE) from err
+                await asyncio.sleep(PAIR_RETRY_PAUSE)
+            finally:
+                # A failed attempt leaves a stale question on the page.
+                self.agent.clear()
         log.info("Bonded with %s.", dev["address"])
+
+    async def _ready_to_page(self, dev):
+        """Give the radio its best chance of reaching the machine.
+
+        Paging a Classic device is not connecting to a BLE one. The controller
+        pages using the clock offset and page-scan mode it learned from an
+        inquiry, and it will not page while it is still inquiring -- so a bond
+        started straight off the scan's own device list, which is the obvious
+        thing to do, pages into a running inquiry and gets Page Timeout back.
+        That is the failure this exists to prevent.
+
+        Home Assistant's passive BLE scan keeps the adapter's `Discovering`
+        true whatever we do, so there is nothing to wait for there: it is LE,
+        it does not inquire, and it does not block a page. Ours does.
+        """
+        if self.scanning:
+            log.info("Stopping our scan: the adapter will not page while it is inquiring.")
+            await self.stop_scan()
+            dev = await self._reselect(dev)
+
+        if dev["rssi"] is None:
+            log.info(
+                "BlueZ has not seen %s recently, so what it holds is too stale to page with. "
+                "Inquiring for %ds -- put the AirMini into pairing mode now.",
+                dev["address"], REFRESH_SCAN_SECONDS,
+            )
+            self.scan(REFRESH_SCAN_SECONDS)
+            await self._scan_finished()
+            dev = await self._reselect(dev)
+            if dev["rssi"] is None:
+                log.warning(
+                    "Still not seen. The machine is out of range, or not in pairing mode: "
+                    "it only answers while it is."
+                )
+
+        # The controller finishes the inquiry window it is in before it pages.
+        await asyncio.sleep(RADIO_SETTLE)
+        return dev
+
+    async def _reselect(self, dev):
+        """Re-read the device after an inquiry; BlueZ may have replaced it."""
+        await self.refresh(force=True)
+        fresh = self._selected_device()
+        if fresh is None:
+            raise RuntimeError(
+                f"BlueZ no longer knows about {dev['address']}. Scan again with the "
+                "machine in pairing mode."
+            )
+        return fresh
 
     def answer(self, value=None, accept=True):
         if self._prompt is None:
