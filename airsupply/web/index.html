@@ -1,0 +1,141 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>airsupply</title>
+<style>
+  /* Light first, then the dark half. Home Assistant's ingress renders this in
+     an iframe that inherits nothing, so both halves are ours to state. */
+  :root {
+    --bg: #f1f4f5;
+    --surface: #ffffff;
+    --ink: #161c21;
+    --muted: #5c686f;
+    --rule: #d9e0e3;
+    --rule-faint: #eceff1;
+    --accent: #0d7f74;
+    --warn: #8a6100;
+    --bad: #ab2f26;
+    --bad-bg: #fdeeec;
+    --shadow: 0 1px 2px rgba(20, 32, 38, .06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #0e1317;
+      --surface: #161d22;
+      --ink: #e3e9ec;
+      --muted: #94a2aa;
+      --rule: #263139;
+      --rule-faint: #1d252b;
+      --accent: #3fb8a8;
+      --warn: #d0a33f;
+      --bad: #e27266;
+      --bad-bg: #2c1a18;
+      --shadow: none;
+    }
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  }
+  main { max-width: 560px; margin: 0 auto; padding: 22px 16px 56px; }
+  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; letter-spacing: .01em; }
+  p { margin: 0 0 10px; }
+  .muted { color: var(--muted); }
+  .num { font-variant-numeric: tabular-nums; }
+
+  /* The machine, which is the page's subject and its largest type. */
+  .machine { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
+  .machine h1 {
+    font-size: 27px; font-weight: 600; letter-spacing: -.015em; margin: 0;
+    overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  }
+  .addr { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .link { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13.5px; margin-bottom: 20px; }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
+  .dot.live { background: var(--accent); }
+  .dot.work { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
+  .dot.none { background: var(--rule); border: 1px solid var(--muted); }
+  @keyframes pulse { 50% { opacity: .25; } }
+  @media (prefers-reduced-motion: reduce) { .dot.work { animation: none; } }
+
+  .card {
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
+    padding: 15px 16px; margin-bottom: 12px; box-shadow: var(--shadow);
+  }
+  .card.quiet { background: none; box-shadow: none; }
+
+  /* Readings sit on ruled paper, the way a night's trace is printed. The rule
+     is the row rhythm, so the numbers line up down the page. */
+  .readings { padding: 4px 16px 8px; }
+  .section + .section { margin-top: 18px; }
+  .row {
+    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
+    padding: 9px 0; border-bottom: 1px solid var(--rule-faint);
+  }
+  .row:last-child { border-bottom: 0; }
+  .row dt { color: var(--muted); font-size: 13.5px; min-width: 0; }
+  .row dd {
+    margin: 0; font-size: 16px; font-weight: 550; font-variant-numeric: tabular-nums;
+    text-align: right; overflow-wrap: anywhere;
+  }
+  dl { margin: 0; }
+  .failed { color: var(--bad); font-size: 13.5px; }
+
+  /* Controls: one row of plain buttons, named for what they do. */
+  .row-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  button {
+    font: inherit; font-size: 14px; padding: 7px 13px; border-radius: 7px; cursor: pointer;
+    border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
+  }
+  button:hover:not(:disabled) { border-color: var(--muted); }
+  button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
+  @media (prefers-color-scheme: dark) { button.go { color: #08120f; } }
+  button.plain { border-color: transparent; background: none; color: var(--muted); padding-inline: 6px; }
+  button:disabled { opacity: .45; cursor: default; }
+  button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  input {
+    font: inherit; font-size: 15px; padding: 7px 10px; width: 8em; letter-spacing: .12em;
+    border-radius: 7px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink);
+    font-variant-numeric: tabular-nums;
+  }
+
+  .note { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
+  .banner {
+    background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad);
+    border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px;
+  }
+  .ask { border-color: var(--warn); }
+  .code { font-size: 26px; font-weight: 600; letter-spacing: .16em; font-variant-numeric: tabular-nums; }
+
+  /* Machine list */
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  td { padding: 8px 0; border-bottom: 1px solid var(--rule-faint); vertical-align: baseline; }
+  tr:last-child td { border-bottom: 0; }
+  td.sig { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; width: 5.5em; }
+  td.act { text-align: right; width: 4.5em; }
+  .name { font-weight: 550; }
+  .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+  details { margin-top: 14px; }
+  summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+  pre.log {
+    margin: 10px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
+    font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    white-space: pre-wrap; overflow-wrap: anywhere;
+  }
+  .log .warning { color: var(--warn); }
+  .log .error { color: var(--bad); }
+  .foot { margin-top: 22px; color: var(--muted); font-size: 12px; }
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script src="assets/elm.js"></script>
+<script type="module" src="assets/app.js"></script>
+</body>
+</html>

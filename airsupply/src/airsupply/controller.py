@@ -5,7 +5,7 @@ renders whatever is there. One operation at a time, because they all want
 the same serial channel, and a person watching a page is not going to click
 two things at once on purpose.
 
-Still read-only. Nothing here can reach the machine's Set path; see
+Read-only. Nothing here can reach the machine's Set path; see
 airmini/session.py for where that line is drawn.
 """
 
@@ -399,11 +399,10 @@ class Controller:
         await self._reads(session)
 
     async def _reads(self, session):
-        """Experiment 5: the reads libairmini's author verified, reproduced.
+        """Everything the machine will say, in one connection.
 
-        Each is reported on its own rather than aborting on the first
-        failure -- three of four working is a more useful result than the
-        first one not.
+        Each read is reported on its own rather than aborting on the first
+        failure: three of four is a more useful answer than the first one not.
         """
         reads = (
             ("GetVersion", session.get_version),
@@ -431,7 +430,7 @@ class Controller:
         if failures:
             log.warning("%d of 4 reads failed.", failures)
         else:
-            log.info("All four reads returned. That is experiment 5 answered.")
+            log.info("All four reads returned.")
 
 
 def _dump(title, value):

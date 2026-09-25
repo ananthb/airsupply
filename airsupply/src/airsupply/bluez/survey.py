@@ -1,4 +1,4 @@
-"""Report what BlueZ can see, which is experiment 1 of docs/verify.md.
+"""Report what BlueZ can see.
 
 This goes through BlueZ's D-Bus API rather than `bluetoothctl scan`, which
 matters: discovery sessions are per-D-Bus-client, so Home Assistant's passive

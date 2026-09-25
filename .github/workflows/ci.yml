@@ -17,6 +17,24 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.x'
+
+      # The image build runs these too, but only what ships in the image is
+      # there to run them against. Here the Elm source is present, so the
+      # check that the page's decoders still match the state the add-on sends
+      # actually runs instead of skipping.
+      - run: python3 -m unittest discover -s tests -v
+        working-directory: airsupply
+        env:
+          PYTHONPATH: src
+
   image:
     runs-on: ubuntu-latest
     steps:

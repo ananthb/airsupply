@@ -140,6 +140,17 @@ before paging, re-inquires first when `RSSI` is missing, retries three times,
 and reports what to do rather than "Page Timeout". Whether the bond then forms,
 and which question the machine asks, is still open below.
 
+**Recorded 2026-09-25 — the bond forms.** With that sequence in place the
+link-layer bond went through on the first try against the machine on the
+nightstand, so experiment 1 and the first half of this one are answered: the
+Home Assistant host is in range, an add-on container can drive BlueZ, and the
+bond is reachable from the page.
+
+The boxes below still need the add-on's own log to fill in: which question
+BlueZ asked, whether SRP-6a returned a `masterPairKey`, and whether a later
+no-PIN reconnect works. Paste the Activity block from the page here, with the
+serial number removed.
+
 - [ ] Which link-layer question does the machine ask -- legacy PIN
       (`RequestPinCode`), passkey confirmation, or none (just-works)? Record
       what the page showed.

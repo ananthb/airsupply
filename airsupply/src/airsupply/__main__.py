@@ -1,22 +1,17 @@
 """airsupply add-on entry point.
 
-Still a diagnostic, not a monitor. It serves a page through Home Assistant's
-ingress that walks through the experiments in docs/verify.md which can be
-run from inside the container, in the order they build on each other:
+Serves a page through Home Assistant's ingress: find the machine, pair with it,
+and read back what it will say -- firmware, its clock, the therapy settings and
+the run meters.
 
-    1. Can BlueZ see the machine, at what signal strength, and does it
-       advertise a serial service?
-    3. Does the Bluetooth bond form, does the serial channel open, and does
-       the handshake complete?
-    5. Do the reads reproduce -- version, clock, settings, run meters?
-
-Experiment 6, the write path, is not here and is not reachable from here. The
-AirMini is a medical device someone sleeps attached to, and no write happens
-until the reads are proven against real hardware.
+It reads and never writes. The AirMini is a medical device someone sleeps
+attached to, and libairmini's write path is unverified upstream, so no Set
+method is declared in this process and none can be sent from it. docs/verify.md
+is where the case for changing that would have to be made.
 
 Configuration is environment: AIRSUPPLY_LOG_LEVEL and AIRSUPPLY_PORT. Which
-machine, and the key that pairs with it, live in /data and are managed from
-the page.
+machine, and the key that pairs with it, live in /data and are managed from the
+page.
 """
 
 import asyncio

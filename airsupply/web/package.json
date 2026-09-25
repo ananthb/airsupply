@@ -1,0 +1,14 @@
+{
+  "name": "airsupply-web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "The airsupply page. Elm owns the state and the view; js/api.js owns the add-on's HTTP API.",
+  "scripts": {
+    "build": "elm make src/Main.elm --optimize --output=dist/assets/elm.js && esbuild js/app.js --bundle --format=esm --minify --outfile=dist/assets/app.js && cp index.html dist/",
+    "dev": "elm make src/Main.elm --output=dist/assets/elm.js && esbuild js/app.js --bundle --format=esm --outfile=dist/assets/app.js && cp index.html dist/"
+  },
+  "devDependencies": {
+    "elm": "0.19.2-0",
+    "esbuild": "0.25.12"
+  }
+}

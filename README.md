@@ -7,13 +7,13 @@ lets you export none of it. This repo is the two consumers that fix that: a
 Home Assistant add-on that keeps the long-term record at home, and a phone app
 that can push to Home Assistant, Health Connect and Apple Health.
 
-**Status: nothing is monitored yet.** The transport is understood and the
-protocol comes from [libairmini](#the-protocol-is-not-ours), but no code here
-has yet read a byte from a real machine. What exists is a Home Assistant add-on
-that runs the first experiments on your own hardware — can the host see the
-machine, does the serial channel open, does pairing complete, and do the four
-basic reads come back — and reports what it finds. It writes nothing. See
-[`docs/verify.md`](docs/verify.md) for the full order.
+**Status: it reaches a machine; it does not monitor one yet.** The transport is
+understood, the protocol comes from [libairmini](#the-protocol-is-not-ours),
+and the Home Assistant add-on pairs with a real AirMini from a page in the
+sidebar, then asks it for its firmware, its clock, the therapy settings and
+the run meters. Nothing is written to the machine, and nothing is kept over time
+yet. [`docs/verify.md`](docs/verify.md) records what has been confirmed
+against hardware and what has not.
 
 ## It is not a BLE device
 
@@ -68,8 +68,8 @@ belongs upstream, in C, under libairmini's BSD-2 — not here.
 The add-on is packaged in [ananthb/hass-addons](https://github.com/ananthb/hass-addons).
 Add `https://github.com/ananthb/hass-addons` as an add-on repository
 (**Settings → Add-ons → Add-on Store → ⋮ → Repositories**), then install
-**airsupply**. It opens as a page in the Home Assistant sidebar and walks
-through finding the machine, bonding with it, pairing and reading. See the
+**airsupply**. It opens as a page in the Home Assistant sidebar, which sets the
+machine up once and shows what it last read. See the
 [add-on docs](https://github.com/ananthb/hass-addons/blob/main/airsupply/DOCS.md).
 
 ## Layout
@@ -77,18 +77,17 @@ through finding the machine, bonding with it, pairing and reading. See the
 | | |
 |---|---|
 | `docs/protocol.md` | the transport, and what is known versus assumed |
-| `docs/verify.md` | experiments against a real machine, in order, with results |
-| `airsupply/` | the container image behind the Home Assistant add-on — **a diagnostic, not a monitor** |
+| `docs/verify.md` | what is confirmed against a real machine, and what is not |
+| `airsupply/` | the container image behind the Home Assistant add-on |
 
 `airsupply/` builds libairmini from the commit in `libairmini.pin`, wraps it
-for Python, serves the page (server-rendered, driven by [htmx](https://htmx.org)), and is published as
-`ghcr.io/ananthb/airsupply:v<version>` on every `v*` tag. The add-on in
-hass-addons is that image plus a run script and an AppArmor profile. It
-exists to answer experiments 1, 3 and 5 on your own hardware: whether the
-Home Assistant host can see the machine, whether the Bluetooth bond forms and
-the serial channel opens and the SRP-6a pairing completes, and whether the
-version, clock, settings and run-meter reads reproduce. It writes nothing,
-and refuses to: `Set` is not among the methods it will send.
+for Python, and serves the page: an [Elm](https://elm-lang.org) application
+over a small JSON API, compiled in the image so that a page which does not
+compile fails the build. It is published as
+`ghcr.io/ananthb/airsupply:v<version>` on every `v*` tag, and the add-on in
+hass-addons is that image plus a run script and an AppArmor profile.
+
+It writes nothing, and refuses to: `Set` is not among the methods it will send.
 
 The phone app arrives once `docs/verify.md` says it can.
 

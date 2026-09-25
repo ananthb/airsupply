@@ -9,7 +9,7 @@
 ARG BUILD_FROM=ghcr.io/home-assistant/amd64-base:3.21
 
 # ---------------------------------------------------------------------------
-# Stage 1: build libairmini, and fetch the one front-end dependency.
+# Stage 1: build libairmini.
 #
 # libairmini is BSD-2 C that owns the AirMini protocol -- framing, SRP-6a
 # pairing, the AES-256-CBC session. We consume it rather than reimplement it,
@@ -42,17 +42,28 @@ RUN . /tmp/libairmini.pin \
     && ctest --test-dir /build --output-on-failure \
     && install -D /build/libairmini.so /out/usr/lib/libairmini.so
 
-# htmx is the whole front end: the page is server-rendered HTML that htmx
-# polls and swaps. Pinned by version and checksum, fetched here rather than
-# committed, so the repository carries no minified blob. 0BSD licence.
-ARG HTMX_VERSION=4.0.0
-ARG HTMX_SHA256=e484d9171a9db30a39c8f16e3d709d4137f3211c659f8e6125816635033d593f
-RUN curl -fsSL "https://raw.githubusercontent.com/bigskysoftware/htmx/v${HTMX_VERSION}/dist/htmx.min.js" \
-       -o /out/htmx.min.js \
-    && echo "${HTMX_SHA256}  /out/htmx.min.js" | sha256sum -c -
+# ---------------------------------------------------------------------------
+# Stage 2: the page.
+#
+# Elm, compiled here rather than committed, so `web/src` is the only source of
+# truth and a page that does not compile fails the build instead of shipping.
+# On Debian rather than the Alpine base because the elm binary the npm package
+# fetches is linked against glibc; only its output crosses into the image, so
+# nothing of this stage ships.
+# ---------------------------------------------------------------------------
+FROM node:22-bookworm-slim AS web
+
+WORKDIR /web
+COPY web/package.json web/package-lock.json ./
+RUN npm ci --no-audit --no-fund
+COPY web/elm.json ./
+COPY web/index.html ./
+COPY web/src/ ./src/
+COPY web/js/ ./js/
+RUN npm run build
 
 # ---------------------------------------------------------------------------
-# Stage 2: the runtime.
+# Stage 3: the runtime.
 # ---------------------------------------------------------------------------
 FROM ${BUILD_FROM}
 
@@ -75,17 +86,23 @@ RUN pip3 install --no-cache-dir --break-system-packages -r /tmp/requirements.txt
     && rm /tmp/requirements.txt
 
 COPY src/ /usr/src/
-COPY --from=libairmini /out/htmx.min.js /usr/src/airsupply/static/htmx.min.js
+COPY tests/ /tmp/tests/
+COPY --from=web /web/dist/ /usr/src/airsupply/static/
 
 ENV PYTHONPATH="/usr/src" \
     PYTHONUNBUFFERED="1"
 
-# Fail the build, not the first start, if the .so does not load against this
-# image's libcrypto or the Python side does not import.
+# Fail the build, not the first start: the .so has to load against this image's
+# libcrypto, the Python side has to import, the page has to have been compiled,
+# and the state the page decodes has to still carry every field it decodes.
 RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
-    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.web, airsupply.views' \
-    && test -s /usr/src/airsupply/static/htmx.min.js
+    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.api, airsupply.web' \
+    && test -s /usr/src/airsupply/static/index.html \
+    && test -s /usr/src/airsupply/static/assets/elm.js \
+    && test -s /usr/src/airsupply/static/assets/app.js \
+    && python3 -m unittest discover -s /tmp/tests -q \
+    && rm -rf /tmp/tests
 
 ARG BUILD_VERSION=dev
 ENV AIRSUPPLY_VERSION="${BUILD_VERSION}"

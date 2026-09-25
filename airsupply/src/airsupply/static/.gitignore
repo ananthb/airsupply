@@ -1,1 +1,4 @@
-htmx.min.js
+# The built page lands here at image build time: index.html from web/, and the
+# compiled Elm and its bundle under assets/. Nothing here is committed.
+*
+!.gitignore
