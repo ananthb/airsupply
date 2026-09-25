@@ -479,6 +479,7 @@ page model state lastTry =
         [ [ heading state ]
         , maybeView lastTry (\err -> div [ class "banner" ] [ text (notAnswering err) ])
         , maybeView state.problem (\why -> div [ class "banner" ] [ text why ])
+        , publishingNote state
         , maybeView state.question (question model state)
         , summary state
         , setup model state
@@ -1017,26 +1018,44 @@ line one =
 footer : State -> Html Msg
 footer state =
     p [ class "foot" ]
-        [ text ("airsupply " ++ state.version ++ ". Reads only; it never writes to the machine. ")
-        , text (publishingText state.publishing)
+        [ text ("airsupply " ++ state.version)
+        , span [ class "sep" ] [ text "·" ]
+        , a [ href source, target "_blank", rel "noopener" ] [ text "Source code" ]
         ]
 
 
-publishingText : Publishing -> String
-publishingText publishing =
+source : String
+source =
+    "https://github.com/ananthb/airsupply"
+
+
+{-| Say something about publishing only when there is something wrong with it.
+
+Working is the ordinary case and does not need announcing; a page that
+narrates its own health is a page nobody reads. Not working is worth knowing,
+because everything else can look perfectly fine while nothing reaches Home
+Assistant at all.
+-}
+publishingNote : State -> List (Html Msg)
+publishingNote state =
+    case publishingProblem state.publishing of
+        Just why ->
+            [ p [ class "note trouble" ] [ text why ] ]
+
+        Nothing ->
+            []
+
+
+publishingProblem : Publishing -> Maybe String
+publishingProblem publishing =
     if not publishing.configured then
-        "No MQTT broker, so nothing is published to Home Assistant."
+        Just "No MQTT broker, so nothing reaches Home Assistant. Install the Mosquitto add-on and restart this one."
 
     else if publishing.connected then
-        "Publishing to Home Assistant over MQTT."
+        Nothing
 
     else
-        case publishing.problem of
-            Just why ->
-                "MQTT: " ++ why
-
-            Nothing ->
-                "Connecting to the MQTT broker."
+        Maybe.map (\why -> "Not publishing to Home Assistant: " ++ why) publishing.problem
 
 
 
