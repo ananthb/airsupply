@@ -111,18 +111,62 @@ def fields(value):
     """Flatten one read result into the labelled rows the page lays out.
 
     A row is named after its own key, which is what someone reading a therapy
-    setting wants to see. Only where that would produce the same name twice --
-    every profile has a start pressure -- does a row take its parent's name
-    as well, so the short labels stay short.
+    setting wants to see. Where that name is not unique -- every profile has a
+    start pressure, and both subsystems report an application identifier --
+    the row also carries the step of its path that actually tells it apart.
+
+    Which is not necessarily its parent. The two application identifiers are
+    both under `IdentificationProfiles/Software`; they differ three levels up,
+    at `FlowGenerator` against `BluetoothModule`. Naming them by their parent
+    would call them both "software application identifier" and lose which
+    machine part each belongs to, which is the one thing the label is for.
     """
     rows = []
     _walk([], value, rows)
-    names = [_leaf(path) for path, _ in rows]
-    repeated = {name for name, count in collections.Counter(names).items() if count > 1}
+    paths = [_units(path) for path, _ in rows]
+    names = [_leaf(path) for path in paths]
+
+    together = collections.defaultdict(list)
+    for path, name in zip(paths, names):
+        together[name].append(path)
+
     return [
-        {"label": _qualified(path) if name in repeated else name, "value": text}
-        for (path, text), name in zip(rows, names)
+        {"label": _label(path, name, together[name]), "value": text}
+        for (_, text), path, name in zip(rows, paths, names)
     ]
+
+
+def _units(path):
+    """Fold a list index into the name above it: "profiles 2", not "2"."""
+    units = []
+    for step in path:
+        if step.isdigit() and units:
+            units[-1] = units[-1] + " " + step
+        else:
+            units.append(step)
+    return units
+
+
+def _leaf(units):
+    return humanise(units[-1]) if units else "Value"
+
+
+def _label(path, name, sharing):
+    if len(sharing) == 1:
+        return name
+    telling = _telling(path, sharing)
+    if telling is None:
+        return name
+    return humanise(telling) + " " + name[:1].lower() + name[1:]
+
+
+def _telling(path, sharing):
+    """The shallowest step of this path that not everything sharing the name has."""
+    for index in range(len(path) - 1):
+        step = path[index]
+        if any(index >= len(other) or other[index] != step for other in sharing):
+            return step
+    return None
 
 
 def _walk(path, node, rows):
@@ -185,26 +229,6 @@ def instant(value):
     if when.tzinfo is not None:
         when = when.astimezone()
     return when.strftime("%d %b %Y, %H:%M")
-
-
-def _leaf(path):
-    named = [step for step in path if not step.isdigit()]
-    return humanise(named[-1]) if named else "Value"
-
-
-def _qualified(path):
-    """The row's own name, with as much of its parent as it takes to be unique.
-
-    A list index belongs to the name above it -- "therapy profiles 2", not a
-    step of its own -- or the label starts with a bare number.
-    """
-    units = []
-    for step in path:
-        if step.isdigit() and units:
-            units[-1] = units[-1] + " " + step
-        else:
-            units.append(step)
-    return humanise(" ".join(units[-2:])) if units else "Value"
 
 
 def humanise(name):

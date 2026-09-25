@@ -103,3 +103,49 @@ class Metrics(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+VERSION = {
+    "BluetoothModule": {
+        "IdentificationProfiles": {
+            "Hardware": {"HardwareIdentifier": "(90)R380-XXXX(91)8.0(21)XXXXXXXXX"},
+            "Product": {"UniversalIdentifier": "cc05ae8b-0000-0000-0000-000000000000"},
+            "Software": {"ApplicationIdentifier": "ST266.1.1.3.199.2"},
+        }
+    },
+    "FlowGenerator": {
+        "IdentificationProfiles": {
+            "Hardware": {"HardwareIdentifier": "(90)R380-XXXX(91)8.0(21)XXXXXXXXX"},
+            "Product": {"UniversalIdentifier": "cc05ae8b-0000-0000-0000-000000000000"},
+            "Software": {
+                "ApplicationIdentifier": "SW03900.01.4.0.3.50927",
+                "BootloaderIdentifier": "SW03901.00.3.0.0.48255",
+            },
+        },
+        "RPC": {"Get": "1.0", "GetVersion": "2.0"},
+    },
+}
+
+
+class Version(unittest.TestCase):
+    """Two subsystems reporting the same field names, three levels down."""
+
+    def test_the_part_of_the_machine_is_what_tells_them_apart(self):
+        labels = rows(VERSION)
+        self.assertEqual("SW03900.01.4.0.3.50927", labels["Flow generator application identifier"])
+        self.assertEqual("ST266.1.1.3.199.2", labels["Bluetooth module application identifier"])
+
+    def test_no_two_rows_share_a_label(self):
+        # The bug this replaced: both application identifiers came out as
+        # "Software application identifier", so the page showed two different
+        # values under one name and no way to tell which machine part was which.
+        labels = [row["label"] for row in api.fields(VERSION)]
+        self.assertEqual(sorted(labels), sorted(set(labels)))
+
+    def test_a_label_does_not_say_the_same_word_twice(self):
+        # "Hardware" + "HardwareIdentifier" used to read "Hardware hardware
+        # identifier", because the parent was assumed to be what distinguishes.
+        self.assertIn("Flow generator hardware identifier", rows(VERSION))
+
+    def test_a_name_only_one_subsystem_uses_stays_short(self):
+        self.assertEqual("SW03901.00.3.0.0.48255", rows(VERSION)["Bootloader identifier"])
