@@ -86,36 +86,70 @@ async def register(bus):
     return profile
 
 
+class NotReachable(Exception):
+    """The serial channel did not open, and we know roughly why.
+
+    BlueZ says things like `br-connection-timeout`, which is accurate and
+    tells somebody looking at their own bedroom nothing. The reason is known
+    at the point it happens and thrown away everywhere else, so it is turned
+    into a sentence here instead.
+    """
+
+
+def explain(err):
+    text = str(getattr(err, "text", "") or err).lower().replace("-", " ")
+    if "timeout" in text:
+        return (
+            "The machine did not answer. It is switched off, out of range, or "
+            "its Bluetooth is asleep -- an AirMini only listens for a while "
+            "after it is powered on."
+        )
+    if "profile unavailable" in text:
+        return (
+            "The machine answered but offered no serial port. If it has been "
+            "factory reset, forget it here and set it up again."
+        )
+    if "already connected" in text:
+        return "Something else is connected to the machine; only one thing can be."
+    if "in progress" in text:
+        return "A connection to the machine is already being made."
+    if "refused" in text or "not available" in text:
+        return "The machine refused the connection."
+    return f"The serial channel did not open: {getattr(err, 'text', None) or err}"
+
+
 async def connect(bus, device_path, profile, timeout=30.0):
     """Ask BlueZ to bring up the serial profile, and wait for the fd.
 
-    Returns the file descriptor, or None. The caller owns the fd.
+    Returns the file descriptor; the caller owns it. Raises NotReachable with
+    something worth reading when it does not open.
     """
     introspection = await bus.introspect(c.BLUEZ, device_path)
     obj = bus.get_proxy_object(c.BLUEZ, device_path, introspection)
     device = obj.get_interface(c.DEVICE)
 
     if not await device.get_paired():
-        log.error(
-            "Device is not bonded. The Bluetooth bond has to exist before the "
-            "serial channel will open, and it is separate from the machine's "
-            "own PIN pairing. Do the Bluetooth step on the page first."
+        raise NotReachable(
+            "The Bluetooth pairing is missing. It has to exist before the serial "
+            "channel will open, and it is separate from the machine's own PIN."
         )
-        return None
 
     profile.reset()
     log.info("Connecting serial profile...")
     try:
         await device.call_connect_profile(c.SPP_UUID)
     except Exception as err:  # noqa: BLE001 -- BlueZ errors are opaque strings
-        log.error("ConnectProfile failed: %s", err)
-        return None
+        log.debug("ConnectProfile failed: %s", err)
+        raise NotReachable(explain(err)) from err
 
     try:
         _, fd, _ = await asyncio.wait_for(profile.connected, timeout)
-    except asyncio.TimeoutError:
-        log.error("ConnectProfile returned but NewConnection never arrived.")
-        return None
+    except asyncio.TimeoutError as err:
+        raise NotReachable(
+            "Bluetooth connected but the machine never opened the channel. "
+            "Something is wrong inside the add-on rather than in the bedroom; "
+            "set log_level to debug and send the log."
+        ) from err
 
     log.info("Serial channel open on fd %s.", fd)
     return fd

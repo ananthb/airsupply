@@ -494,13 +494,17 @@ class Controller:
         address = (address or self.selected or "").upper()
         dev = next((d for d in self.devices if d["address"] == address), None)
         if dev is None:
-            raise RuntimeError(f"BlueZ cannot see {address or 'any machine'} right now")
+            raise RuntimeError(
+                f"Bluetooth cannot see {address or 'any machine'} at the moment. "
+                "It is switched off, out of range, or has not been heard from since "
+                "the last scan."
+            )
         if not dev["paired"]:
             raise RuntimeError("the Bluetooth bond is missing; do that step first")
 
+        # spp.connect raises NotReachable with something worth reading; the
+        # page shows whatever comes out of here, so nothing is swallowed.
         fd = await spp.connect(self.bus, dev["path"], self.profile)
-        if fd is None:
-            raise RuntimeError("could not open the serial channel; see the log")
 
         # Imported here so the page still comes up on an image where
         # libairmini failed to build -- the survey is useful on its own.

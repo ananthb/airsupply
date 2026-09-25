@@ -19,11 +19,14 @@ from . import entities
 
 # Titles for the four reads, in the order a person would want them. The keys
 # are what controller._reads() files its results under.
+# One tab each, in the order somebody would look at them: what the machine is
+# set to, what it has done, then the two that answer questions nobody asks
+# daily. Short, because they are tabs and have to sit on one row.
 SECTIONS = (
+    ("Settings", "Therapy"),
+    ("MachineMetrics", "Meters"),
     ("GetVersion", "Firmware"),
-    ("GetDateTime", "Machine clock"),
-    ("Settings", "Therapy settings"),
-    ("MachineMetrics", "Run meters"),
+    ("GetDateTime", "Clock"),
 )
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")

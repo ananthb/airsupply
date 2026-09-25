@@ -132,7 +132,13 @@ type alias Model =
     { link : Link
     , pin : String
     , reply : String
-    , picking : Bool
+
+    -- Which tab of the reading is open, by its title. Held here and not on
+    -- the add-on: which drawer somebody has open is nobody else's business
+    -- and should survive a poll.
+    , tab : String
+    , menuOpen : Bool
+    , adding : Bool
 
     -- One request at a time. A tick that lands while the last one is still
     -- out is dropped rather than queued: the answer is the whole state, so
@@ -143,7 +149,7 @@ type alias Model =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { link = Starting, pin = "", reply = "", picking = False, waiting = True }
+    ( { link = Starting, pin = "", reply = "", tab = "", menuOpen = False, adding = False, waiting = True }
     , fetch
     )
 
@@ -160,7 +166,9 @@ type Msg
     | ReplyTyped String
     | SendPin
     | SendReply
-    | TogglePicking
+    | PickTab String
+    | ToggleMenu
+    | ToggleAdding
 
 
 update : Msg -> Model -> ( Model, Cmd Msg )
@@ -177,7 +185,8 @@ update msg model =
             ( absorb result model, Cmd.none )
 
         Send kind extras ->
-            ( { model | waiting = True }, act kind extras )
+            -- Any action closes the menu it was almost certainly chosen from.
+            ( { model | waiting = True, menuOpen = False }, act kind extras )
 
         PinTyped value ->
             ( { model | pin = digits 8 value }, Cmd.none )
@@ -193,8 +202,14 @@ update msg model =
             , act "answer" [ ( "value", E.string model.reply ), ( "accept", E.bool True ) ]
             )
 
-        TogglePicking ->
-            ( { model | picking = not model.picking }, Cmd.none )
+        PickTab title ->
+            ( { model | tab = title }, Cmd.none )
+
+        ToggleMenu ->
+            ( { model | menuOpen = not model.menuOpen }, Cmd.none )
+
+        ToggleAdding ->
+            ( { model | adding = not model.adding, menuOpen = False }, Cmd.none )
 
 
 {-| Keep a typed code to digits. Both things a person types here -- the
@@ -236,12 +251,13 @@ absorb result model =
 
                     else
                         model.reply
-                , picking =
-                    if state.stage == Choose then
+                , adding =
+                    -- Adding is over once there is a machine to set up.
+                    if state.stage /= Choose && state.machine /= Nothing then
                         False
 
                     else
-                        model.picking
+                        model.adding
             }
 
 
@@ -458,7 +474,8 @@ view model =
     main_ []
         (case model.link of
             Starting ->
-                [ p [ class "muted" ] [ text "Starting." ] ]
+                [ p [ class "muted" ] [ text "Starting." ]
+                ]
 
             Unreachable err ->
                 [ div [ class "banner" ] [ text (notAnswering err) ] ]
@@ -476,15 +493,15 @@ notAnswering err =
 page : Model -> State -> Maybe Http.Error -> List (Html Msg)
 page model state lastTry =
     List.concat
-        [ [ heading state ]
+        [ [ heading model state ]
         , maybeView lastTry (\err -> div [ class "banner" ] [ text (notAnswering err) ])
         , maybeView state.problem (\why -> div [ class "banner" ] [ text why ])
         , publishingNote state
         , maybeView state.question (question model state)
-        , summary state
+        , figures state
         , setup model state
-        , machineList model state
-        , reading state
+        , adding model state
+        , data model state
         , [ activity state, footer state ]
         ]
 
@@ -499,44 +516,100 @@ maybeView value render =
             []
 
 
-heading : State -> Html Msg
-heading state =
-    div []
-        [ div [ class "machine" ]
-            (case state.machine of
-                Just machine ->
-                    [ h1 [] [ text (title machine) ]
-                    , span [ class "addr" ] [ text machine.address ]
-                    ]
+
+-- THE MACHINE, AND SWITCHING BETWEEN THEM
+
+
+{-| The machine's name is the control that switches machines.
+
+Not a button somewhere else that appears once one is chosen: the thing you
+would click to change which machine you are looking at is its name, and it is
+in the same place whether there are three machines or none.
+-}
+heading : Model -> State -> Html Msg
+heading model state =
+    div [ class "head" ]
+        [ div [ class "top" ]
+            [ button
+                [ class "picker"
+                , onClick ToggleMenu
+                , attribute "aria-haspopup" "true"
+                , attribute "aria-expanded"
+                    (if model.menuOpen then
+                        "true"
+
+                     else
+                        "false"
+                    )
+                ]
+                [ h1 [] [ text (headline state) ]
+                , span [ class "caret" ] [ text "▾" ]
+                ]
+            , case Maybe.andThen .person state.machine of
+                Just person ->
+                    span [ class "whose" ] [ text person.name ]
 
                 Nothing ->
-                    [ h1 [] [ text "No machine yet" ] ]
-            )
+                    text ""
+            ]
         , div [ class "link" ]
             [ span [ class ("dot " ++ lampClass state) ] []
             , text (lampText state)
             ]
+        , if model.menuOpen then
+            menu state
+
+          else
+            text ""
         ]
 
 
-{-| A machine is named for whose it is, once anyone has said.
--}
-title : Machine -> String
-title machine =
-    let
-        name =
-            if String.isEmpty machine.name then
-                machine.address
-
-            else
-                machine.name
-    in
-    case machine.person of
-        Just person ->
-            name ++ " · " ++ person.name
+headline : State -> String
+headline state =
+    case state.machine of
+        Just machine ->
+            label machine
 
         Nothing ->
-            name
+            "No machine yet"
+
+
+menu : State -> Html Msg
+menu state =
+    div []
+        [ div [ class "overlay", onClick ToggleMenu ] []
+        , div [ class "menu" ]
+            (List.map (menuRow state) state.machines
+                ++ [ button [ class "menu-add", onClick ToggleAdding ] [ text "Add a machine" ] ]
+            )
+        ]
+
+
+menuRow : State -> Machine -> Html Msg
+menuRow state machine =
+    let
+        chosen =
+            Just machine.address == Maybe.map .address state.machine
+    in
+    button
+        [ class "menu-row"
+        , classList [ ( "on", chosen ) ]
+        , onClick (Send "select" [ ( "address", E.string machine.address ) ])
+        ]
+        [ span [ class ("dot " ++ machineDot machine) ] []
+        , span [ class "menu-name" ] [ text (label machine) ]
+        , span [ class "menu-whose" ]
+            [ text (Maybe.withDefault "" (Maybe.map .name machine.person)) ]
+        ]
+
+
+machineDot : Machine -> String
+machineDot machine =
+    if machine.paired then
+        "live"
+
+    else
+        "none"
 
 
 label : Machine -> String
@@ -603,18 +676,34 @@ idleText state =
         Ready ->
             case Maybe.andThen .lastRead state.machine of
                 Just at ->
-                    "Read at " ++ at ++ "."
+                    "Read at " ++ clock at
 
                 Nothing ->
                     "Set up. Nothing read yet."
+
+
+{-| "2026-09-26 00:34:09" as "00:34".
+
+The line at the top is about what just happened, and a full timestamp there
+is four fields of noise for one that matters. The Device tab keeps the whole
+thing, which is where a reading old enough to need dating gets read.
+-}
+clock : String -> String
+clock at =
+    case String.split " " at of
+        [ _, time ] ->
+            String.left 5 time
+
+        _ ->
+            at
 
 
 
 -- THE FEW THINGS A READING IS ABOUT
 
 
-summary : State -> List (Html Msg)
-summary state =
+figures : State -> List (Html Msg)
+figures state =
     if List.isEmpty state.summary then
         []
 
@@ -631,7 +720,7 @@ figure one =
 
 
 
--- SETUP
+-- SETUP, WHILE IT IS UNFINISHED
 
 
 setup : Model -> State -> List (Html Msg)
@@ -649,12 +738,7 @@ setup model state =
             ]
 
         Choose ->
-            [ div [ class "card" ]
-                [ p [ class "note" ] [ text "Put the AirMini in pairing mode, then look for it. It is only discoverable while it is." ]
-                , div [ class "row-btns" ] [ scanButton state ]
-                , foundList state
-                ]
-            ]
+            []
 
         NeedsPairing ->
             [ div [ class "card" ]
@@ -686,19 +770,30 @@ setup model state =
             ]
 
         Ready ->
-            [ div [ class "row-btns", style "margin-bottom" "16px" ]
-                [ button [ class "go", onClick (Send "read" []), disabled working ] [ text "Read now" ]
-                , button [ class "plain", onClick TogglePicking ]
-                    [ text
-                        (if model.picking then
-                            "Done"
-
-                         else
-                            "Machines"
-                        )
-                    ]
-                ]
+            [ div [ class "row-btns actions" ]
+                [ button [ class "go", onClick (Send "read" []), disabled working ] [ text "Read now" ] ]
             ]
+
+
+adding : Model -> State -> List (Html Msg)
+adding model state =
+    if not (model.adding || state.stage == Choose) then
+        []
+
+    else
+        [ div [ class "card" ]
+            [ p [ class "note" ] [ text "Put the AirMini in pairing mode, then look for it. It is only discoverable while it is." ]
+            , div [ class "row-btns" ]
+                [ scanButton state
+                , if List.isEmpty state.machines then
+                    text ""
+
+                  else
+                    button [ class "plain", onClick ToggleAdding ] [ text "Cancel" ]
+                ]
+            , foundList state
+            ]
+        ]
 
 
 scanButton : State -> Html Msg
@@ -715,118 +810,20 @@ scanButton state =
         ]
 
 
-
--- MACHINES, AND WHOSE THEY ARE
-
-
-machineList : Model -> State -> List (Html Msg)
-machineList model state =
-    if not model.picking || state.stage == Choose then
-        -- While there is no machine at all, setting one up is the only thing
-        -- to do and the setup card is already showing the list.
-        []
-
-    else
-        [ div [ class "card" ]
-            [ h2 [] [ text "Machines" ]
-            , table [] (List.map (machineRow state) state.machines)
-            , div [ class "row-btns" ]
-                [ scanButton state
-                , button
-                    [ class "plain danger"
-                    , onClick (Send "forget" [])
-                    , disabled (state.busy /= Nothing || state.machine == Nothing)
-                    ]
-                    [ text "Forget this machine" ]
-                ]
-            , foundList state
-            , peopleNote state
-            ]
-        ]
-
-
-machineRow : State -> Machine -> Html Msg
-machineRow state machine =
-    let
-        chosen =
-            Just machine.address == Maybe.map .address state.machine
-    in
-    tr [ classList [ ( "sel", chosen ) ] ]
-        [ td []
-            [ div [ class "name" ] [ text (label machine) ]
-            , div [ class "sub" ] [ text (machine.address ++ describe machine) ]
-            ]
-        , td [] [ personPicker state machine ]
-        , td [ class "act" ]
-            [ if chosen then
-                span [ class "sub" ] [ text "shown" ]
-
-              else
-                button [ onClick (Send "select" [ ( "address", E.string machine.address ) ]) ] [ text "Show" ]
-            ]
-        ]
-
-
-{-| Who the machine belongs to, chosen from Home Assistant's own people.
-
-Stored by their id rather than their name, so renaming a person in Home
-Assistant does not orphan a machine.
--}
-personPicker : State -> Machine -> Html Msg
-personPicker state machine =
-    let
-        chosen =
-            Maybe.withDefault "" machine.personId
-
-        choice person =
-            option [ value person.id, selected (person.id == chosen) ] [ text person.name ]
-
-        nobody =
-            option [ value "", selected (chosen == "") ] [ text "nobody" ]
-
-        gone =
-            if machine.missingPerson then
-                [ option [ value chosen, selected True ] [ text "(person deleted)" ] ]
-
-            else
-                []
-    in
-    select
-        [ class "person"
-        , disabled (List.isEmpty state.people)
-        , onInput
-            (\id ->
-                Send "assign"
-                    [ ( "address", E.string machine.address ), ( "person_id", E.string id ) ]
-            )
-        ]
-        (nobody :: gone ++ List.map choice state.people)
-
-
-peopleNote : State -> Html Msg
-peopleNote state =
-    case ( state.peopleProblem, List.isEmpty state.people ) of
-        ( Just why, _ ) ->
-            p [ class "note" ] [ text ("Home Assistant's people are not available: " ++ why) ]
-
-        ( Nothing, True ) ->
-            p [ class "note" ] [ text "Home Assistant has no people to assign a machine to yet." ]
-
-        ( Nothing, False ) ->
-            text ""
-
-
 foundList : State -> Html Msg
 foundList state =
     let
         known =
             List.map .address state.machines
 
+        unknown =
+            List.filter (\d -> not (List.member d.address known)) state.found
+
         candidates =
-            List.filter (\d -> d.candidate && not (List.member d.address known)) state.found
+            List.filter .candidate unknown
 
         others =
-            List.filter (\d -> not d.candidate && not (List.member d.address known)) state.found
+            List.filter (not << .candidate) unknown
     in
     div []
         [ if List.isEmpty candidates then
@@ -834,48 +831,36 @@ foundList state =
                 [ text "No new AirMini found. If one is in pairing mode and still does not appear, Home Assistant is out of range." ]
 
           else
-            table [] (List.map foundRow candidates)
+            table [ class "found" ] (List.map foundRow candidates)
         , if List.isEmpty others then
             text ""
 
           else
             details []
                 [ summaryTag (String.fromInt (List.length others) ++ " other Bluetooth devices")
-                , table [] (List.map foundRow others)
+                , table [ class "found" ] (List.map foundRow others)
                 ]
         ]
 
 
 foundRow : Found -> Html Msg
-foundRow device =
+foundRow seen =
     tr []
         [ td []
-            [ div [ class "name" ] [ text (if String.isEmpty device.name then device.address else device.name) ]
-            , div [ class "sub" ] [ text device.address ]
+            [ div [ class "name" ]
+                [ text
+                    (if String.isEmpty seen.name then
+                        seen.address
+
+                     else
+                        seen.name
+                    )
+                ]
+            , div [ class "sub" ] [ text seen.address ]
             ]
-        , td [ class "sig" ] [ text (signalText device.signal) ]
+        , td [ class "sig" ] [ text (signalText seen.signal) ]
         , td [ class "act" ]
-            [ button [ onClick (Send "select" [ ( "address", E.string device.address ) ]) ] [ text "Add" ] ]
-        ]
-
-
-describe : Machine -> String
-describe machine =
-    String.concat
-        [ if machine.paired then
-            ""
-
-          else if machine.bonded then
-            "  needs its PIN"
-
-          else
-            "  not paired"
-        , case machine.signal of
-            Just dbm ->
-                "  " ++ String.fromInt dbm ++ " dBm"
-
-            Nothing ->
-                "  out of range"
+            [ button [ onClick (Send "select" [ ( "address", E.string seen.address ) ]) ] [ text "Add" ] ]
         ]
 
 
@@ -957,45 +942,187 @@ question model state ask =
 
 
 
--- EVERYTHING THE MACHINE SAID
+-- THE READING, ONE TAB AT A TIME
 
 
-reading : State -> List (Html Msg)
-reading state =
-    case state.reading of
+{-| Four reads and the machine's own details, as tabs.
+
+All of it at once was a screen and a half of rows with nothing to tell you
+which were worth looking at. Each read already knows what it is about, so
+each becomes a tab and the machine's own details -- its address, its signal,
+whose it is -- become the last one, which is where somebody goes looking for
+them and nowhere else.
+-}
+data : Model -> State -> List (Html Msg)
+data model state =
+    case state.machine of
         Nothing ->
             []
 
-        Just whole ->
-            [ details [ class "card wide" ]
-                [ summaryTag ("Everything the machine said, at " ++ whole.at)
-                , div [ class "readings" ] (List.map section whole.sections)
+        Just machine ->
+            let
+                titles =
+                    List.map .title (Maybe.withDefault [] (Maybe.map .sections state.reading))
+                        ++ [ deviceTab ]
+
+                open =
+                    if List.member model.tab titles then
+                        model.tab
+
+                    else
+                        Maybe.withDefault deviceTab (List.head titles)
+            in
+            [ div [ class "card tabbed" ]
+                [ nav [ class "tabs", attribute "role" "tablist" ] (List.map (tab open) titles)
+                , div [ class "panel" ] [ panel state machine open ]
                 ]
             ]
 
 
+deviceTab : String
+deviceTab =
+    "Device"
+
+
+tab : String -> String -> Html Msg
+tab open title =
+    button
+        [ class "tab"
+        , classList [ ( "on", title == open ) ]
+        , attribute "role" "tab"
+        , attribute "aria-selected"
+            (if title == open then
+                "true"
+
+             else
+                "false"
+            )
+        , onClick (PickTab title)
+        ]
+        [ text title ]
+
+
+panel : State -> Machine -> String -> Html Msg
+panel state machine open =
+    if open == deviceTab then
+        device state machine
+
+    else
+        case List.filter (\s -> s.title == open) (Maybe.withDefault [] (Maybe.map .sections state.reading)) of
+            found :: _ ->
+                section found
+
+            [] ->
+                p [ class "muted" ] [ text "Nothing read yet." ]
+
+
 section : Section -> Html Msg
 section content =
-    div [ class "section" ]
-        [ h2 [] [ text content.title ]
-        , case ( content.problem, content.fields ) of
-            ( Just why, _ ) ->
-                p [ class "failed" ] [ text why ]
+    case ( content.problem, content.fields ) of
+        ( Just why, _ ) ->
+            p [ class "failed" ] [ text why ]
 
-            ( Nothing, [] ) ->
-                p [ class "muted" ] [ text "Nothing returned." ]
+        ( Nothing, [] ) ->
+            p [ class "muted" ] [ text "Nothing returned." ]
 
-            ( Nothing, fields ) ->
-                dl [] (List.map field fields)
-        ]
+        ( Nothing, fields ) ->
+            dl [ class "rows" ] (List.concatMap field fields)
 
 
-field : Field -> Html Msg
+field : Field -> List (Html Msg)
 field one =
-    div [ class "row" ]
-        [ dt [] [ text one.label ]
-        , dd [] [ text one.value ]
+    [ dt [] [ text one.label ], dd [] [ text one.value ] ]
+
+
+{-| The machine itself: the facts about the thing rather than about the night.
+-}
+device : State -> Machine -> Html Msg
+device state machine =
+    div []
+        [ dl [ class "rows" ]
+            (List.concatMap field
+                [ Field "Bluetooth address" machine.address
+                , Field "Signal" (signalText machine.signal)
+                , Field "Bluetooth pairing"
+                    (if machine.bonded then
+                        "paired"
+
+                     else
+                        "not paired"
+                    )
+                , Field "Machine pairing"
+                    (if machine.paired then
+                        "paired"
+
+                     else
+                        "needs its PIN"
+                    )
+                , Field "Last read" (Maybe.withDefault "never" machine.lastRead)
+                ]
+            )
+        , div [ class "rows assign" ]
+            [ span [ class "assign-label" ] [ text "Belongs to" ]
+            , personPicker state machine
+            ]
+        , div [ class "row-btns" ]
+            [ button
+                [ class "plain danger"
+                , onClick (Send "forget" [])
+                , disabled (state.busy /= Nothing)
+                ]
+                [ text "Forget this machine" ]
+            ]
+        , peopleNote state
         ]
+
+
+{-| Who the machine belongs to, chosen from Home Assistant's own people.
+
+Stored by their id rather than their name, so renaming a person in Home
+Assistant does not orphan a machine.
+-}
+personPicker : State -> Machine -> Html Msg
+personPicker state machine =
+    let
+        chosen =
+            Maybe.withDefault "" machine.personId
+
+        choice person =
+            option [ value person.id, selected (person.id == chosen) ] [ text person.name ]
+
+        nobody =
+            option [ value "", selected (chosen == "") ] [ text "nobody" ]
+
+        gone =
+            if machine.missingPerson then
+                [ option [ value chosen, selected True ] [ text "(person deleted)" ] ]
+
+            else
+                []
+    in
+    select
+        [ class "person"
+        , disabled (List.isEmpty state.people)
+        , onInput
+            (\id ->
+                Send "assign"
+                    [ ( "address", E.string machine.address ), ( "person_id", E.string id ) ]
+            )
+        ]
+        (nobody :: gone ++ List.map choice state.people)
+
+
+peopleNote : State -> Html Msg
+peopleNote state =
+    case ( state.peopleProblem, List.isEmpty state.people ) of
+        ( Just why, _ ) ->
+            p [ class "note" ] [ text ("Home Assistant's people are not available: " ++ why) ]
+
+        ( Nothing, True ) ->
+            p [ class "note" ] [ text "Home Assistant has no people to assign a machine to yet." ]
+
+        ( Nothing, False ) ->
+            text ""
 
 
 

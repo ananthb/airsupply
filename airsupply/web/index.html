@@ -19,6 +19,8 @@
     --bad: #ab2f26;
     --bad-bg: #fdeeec;
     --shadow: 0 1px 2px rgba(20, 32, 38, .06);
+    --lift: 0 10px 28px rgba(20, 32, 38, .14);
+    --pad: 16px;
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -33,6 +35,7 @@
       --bad: #e27266;
       --bad-bg: #2c1a18;
       --shadow: none;
+      --lift: 0 10px 28px rgba(0, 0, 0, .5);
     }
   }
 
@@ -42,51 +45,122 @@
     font: 15px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   }
   main { max-width: 560px; margin: 0 auto; padding: 22px 16px 56px; }
-  h2 { font-size: 13px; font-weight: 600; color: var(--muted); margin: 0 0 8px; letter-spacing: .01em; }
   p { margin: 0 0 10px; }
   .muted { color: var(--muted); }
-  .num { font-variant-numeric: tabular-nums; }
 
-  /* The machine, which is the page's subject and its largest type. */
-  .machine { display: flex; align-items: baseline; gap: 12px; margin-bottom: 4px; }
-  .machine h1 {
+  /* --- the machine, and the control that switches machines --------------- */
+
+  .head { position: relative; margin-bottom: 18px; }
+  .top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+
+  .picker {
+    display: flex; align-items: baseline; gap: 7px; min-width: 0;
+    padding: 2px 6px 2px 0; margin: 0 0 0 -2px;
+    background: none; border: 0; border-radius: 8px; cursor: pointer;
+    color: inherit; font: inherit; text-align: left;
+  }
+  .picker:hover { color: var(--accent); }
+  .picker h1 {
     font-size: 27px; font-weight: 600; letter-spacing: -.015em; margin: 0;
     overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   }
-  .addr { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
-  .link { display: flex; align-items: center; gap: 7px; color: var(--muted); font-size: 13.5px; margin-bottom: 20px; }
+  .caret { font-size: 13px; color: var(--muted); flex: none; }
+  .whose { color: var(--muted); font-size: 13.5px; white-space: nowrap; flex: none; }
+
+  .link { display: flex; align-items: center; gap: 7px; color: var(--muted);
+          font-size: 13.5px; margin-top: 4px; }
   .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex: none; }
   .dot.live { background: var(--accent); }
   .dot.work { background: var(--warn); animation: pulse 1.4s ease-in-out infinite; }
-  .dot.none { background: var(--rule); border: 1px solid var(--muted); }
+  .dot.none { background: transparent; box-shadow: inset 0 0 0 1px var(--muted); }
   @keyframes pulse { 50% { opacity: .25; } }
   @media (prefers-reduced-motion: reduce) { .dot.work { animation: none; } }
 
+  .overlay { position: fixed; inset: 0; z-index: 20; }
+  .menu {
+    position: absolute; z-index: 21; top: calc(100% - 2px); left: -6px;
+    min-width: 260px; max-width: min(360px, calc(100vw - 40px));
+    display: flex; flex-direction: column; padding: 5px;
+    background: var(--surface); border: 1px solid var(--rule); border-radius: 11px;
+    box-shadow: var(--lift);
+  }
+  .menu-row, .menu-add {
+    display: flex; align-items: center; gap: 9px; width: 100%;
+    padding: 9px 10px; border: 0; border-radius: 7px; cursor: pointer;
+    background: none; color: var(--ink); font: inherit; font-size: 14px; text-align: left;
+  }
+  .menu-row:hover, .menu-add:hover { background: var(--rule-faint); }
+  .menu-row.on { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+  .menu-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .menu-whose { color: var(--muted); font-size: 12.5px; flex: none; }
+  .menu-add { color: var(--accent); border-top: 1px solid var(--rule-faint);
+              border-radius: 0 0 7px 7px; margin-top: 3px; padding-left: 26px; }
+
+  /* --- cards ------------------------------------------------------------- */
+
   .card {
     background: var(--surface); border: 1px solid var(--rule); border-radius: 10px;
-    padding: 15px 16px; margin-bottom: 12px; box-shadow: var(--shadow);
+    padding: var(--pad); margin-bottom: 12px; box-shadow: var(--shadow);
   }
-  .card.quiet { background: none; box-shadow: none; }
+  .card > :last-child { margin-bottom: 0; }
 
-  /* Readings sit on ruled paper, the way a night's trace is printed. The rule
-     is the row rhythm, so the numbers line up down the page. */
-  .readings { padding: 4px 16px 8px; margin: 0 -16px; }
-  .section + .section { margin-top: 18px; }
-  .row {
-    display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
-    padding: 9px 0; border-bottom: 1px solid var(--rule-faint);
+  /* The few things a reading is about. One column per figure, all of them
+     starting on the same baseline whatever the label wraps to. */
+  .figures {
+    display: grid; grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+    gap: 14px 22px; align-items: start;
   }
-  .row:last-child { border-bottom: 0; }
-  .row dt { color: var(--muted); font-size: 13.5px; min-width: 0; }
-  .row dd {
-    margin: 0; font-size: 16px; font-weight: 550; font-variant-numeric: tabular-nums;
-    text-align: right; overflow-wrap: anywhere;
+  .figure-label { color: var(--muted); font-size: 12.5px; line-height: 1.3; }
+  .figure-value {
+    font-size: 20px; font-weight: 600; letter-spacing: -.01em;
+    font-variant-numeric: tabular-nums; margin-top: 3px;
   }
-  dl { margin: 0; }
-  .failed { color: var(--bad); font-size: 13.5px; }
 
-  /* Controls: one row of plain buttons, named for what they do. */
+  /* --- the reading, in tabs ---------------------------------------------- */
+
+  .tabbed { padding: 0; }
+  .tabs {
+    display: flex; gap: 2px; padding: 4px 6px 0; overflow-x: auto;
+    border-bottom: 1px solid var(--rule); scrollbar-width: none;
+  }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tab {
+    flex: none; padding: 9px 11px 8px; margin-bottom: -1px;
+    background: none; border: 0; border-bottom: 2px solid transparent;
+    color: var(--muted); font: inherit; font-size: 13.5px; cursor: pointer; white-space: nowrap;
+  }
+  .tab:hover { color: var(--ink); }
+  .tab.on { color: var(--ink); font-weight: 550; border-bottom-color: var(--accent); }
+  .panel { padding: 4px var(--pad) var(--pad); max-height: min(420px, 55vh);
+           overflow: auto; overscroll-behavior: contain; }
+
+  /* Label left, value right, every value in one column whatever the labels
+     do. The grid is what keeps them aligned; a flex row per item does not. */
+  dl.rows {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 0 18px; margin: 0; align-items: baseline;
+  }
+  dl.rows dt, dl.rows dd {
+    padding: 9px 0; margin: 0; border-bottom: 1px solid var(--rule-faint);
+  }
+  dl.rows dt { color: var(--muted); font-size: 13.5px; }
+  dl.rows dd {
+    text-align: right; font-size: 15px; font-weight: 550;
+    font-variant-numeric: tabular-nums; overflow-wrap: anywhere;
+  }
+  dl.rows dt:nth-last-of-type(1), dl.rows dd:nth-last-of-type(1) { border-bottom: 0; }
+
+  .assign {
+    display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+    gap: 0 18px; align-items: center; padding: 10px 0 2px;
+  }
+  .assign-label { color: var(--muted); font-size: 13.5px; }
+  .failed { color: var(--bad); font-size: 13.5px; margin: 8px 0; }
+
+  /* --- controls ---------------------------------------------------------- */
+
   .row-btns { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+  .row-btns.actions { margin-bottom: 14px; }
   button {
     font: inherit; font-size: 14px; padding: 7px 13px; border-radius: 7px; cursor: pointer;
     border: 1px solid var(--rule); background: var(--surface); color: var(--ink);
@@ -95,71 +169,60 @@
   button.go { background: var(--accent); border-color: var(--accent); color: #fff; }
   @media (prefers-color-scheme: dark) { button.go { color: #08120f; } }
   button.plain { border-color: transparent; background: none; color: var(--muted); padding-inline: 6px; }
+  button.danger { color: var(--bad); }
   button:disabled { opacity: .45; cursor: default; }
-  button:focus-visible, input:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
-  input {
-    font: inherit; font-size: 15px; padding: 7px 10px; width: 8em; letter-spacing: .12em;
-    border-radius: 7px; border: 1px solid var(--rule); background: var(--bg); color: var(--ink);
-    font-variant-numeric: tabular-nums;
+  :is(button, input, select, summary, a):focus-visible {
+    outline: 2px solid var(--accent); outline-offset: 2px;
   }
-
-  /* The few things a reading is about, before everything it contains. */
-  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 2px 20px; }
-  .figure { padding: 6px 0; }
-  .figure-label { color: var(--muted); font-size: 12.5px; }
-  .figure-value { font-size: 21px; font-weight: 600; letter-spacing: -.01em;
-                  font-variant-numeric: tabular-nums; margin-top: 1px; }
-
-  select.person {
-    font: inherit; font-size: 13.5px; padding: 4px 6px; border-radius: 6px; max-width: 11em;
+  input, select.person {
+    font: inherit; font-size: 14px; padding: 6px 9px; border-radius: 7px;
     border: 1px solid var(--rule); background: var(--bg); color: var(--ink);
   }
+  input { width: 8em; letter-spacing: .12em; font-variant-numeric: tabular-nums; }
+  select.person { max-width: 13em; }
   select.person:disabled { opacity: .5; }
-  button.danger { color: var(--bad); }
-  details.card.wide > summary { margin: -3px 0; }
-  details.card.wide[open] > summary { margin-bottom: 8px; }
-  tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
 
   .note { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
+  .note.trouble { color: var(--warn); }
   .banner {
     background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad);
     border-radius: 8px; padding: 10px 12px; margin-bottom: 12px; font-size: 14px;
   }
   .ask { border-color: var(--warn); }
-  .code { font-size: 26px; font-weight: 600; letter-spacing: .16em; font-variant-numeric: tabular-nums; }
+  .code { font-size: 26px; font-weight: 600; letter-spacing: .16em;
+          font-variant-numeric: tabular-nums; }
 
-  /* Machine list */
-  table { width: 100%; border-collapse: collapse; font-size: 14px; }
-  td { padding: 8px 0; border-bottom: 1px solid var(--rule-faint); vertical-align: baseline; }
-  tr:last-child td { border-bottom: 0; }
-  td.sig { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; width: 5.5em; }
-  td.act { text-align: right; width: 4.5em; }
+  /* --- what a scan found -------------------------------------------------- */
+
+  table.found { width: 100%; border-collapse: collapse; font-size: 14px; margin-top: 10px; }
+  table.found td { padding: 9px 0; border-bottom: 1px solid var(--rule-faint); vertical-align: middle; }
+  table.found tr:last-child td { border-bottom: 0; }
+  table.found td.sig { color: var(--muted); font-variant-numeric: tabular-nums;
+                       white-space: nowrap; width: 7.5em; text-align: right; }
+  table.found td.act { text-align: right; width: 4.5em; }
   .name { font-weight: 550; }
   .sub { color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 
+  /* --- activity ----------------------------------------------------------- */
+
   details { margin-top: 14px; }
   summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
-  /* The two boxes that grow with what the machine says. Both scroll inside
-     themselves, and `overscroll-behavior: contain` is what stops reaching the
-     bottom of one from handing the scroll to the page underneath. Capped
-     against the viewport as well as in pixels, so neither takes over a phone. */
-  pre.log, .readings {
-    max-height: min(340px, 45vh); overflow: auto; overscroll-behavior: contain;
-  }
+  /* Scrolls inside itself; overscroll-behavior is what stops reaching the
+     bottom from handing the scroll to the page underneath. */
   pre.log {
     margin: 10px 0 0; padding: 10px 12px;
+    max-height: min(340px, 45vh); overflow: auto; overscroll-behavior: contain;
     background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
     font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     white-space: pre-wrap; overflow-wrap: anywhere;
   }
   .log .warning { color: var(--warn); }
   .log .error { color: var(--bad); }
+
   .foot { margin-top: 22px; color: var(--muted); font-size: 12px; }
   .foot a { color: inherit; }
   .foot a:hover { color: var(--ink); }
   .foot .sep { margin: 0 7px; opacity: .55; }
-  .note.trouble { color: var(--warn); }
-
 </style>
 </head>
 <body>
