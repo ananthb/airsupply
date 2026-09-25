@@ -13,6 +13,7 @@ import asyncio
 import collections
 import json
 import logging
+import re
 import time
 
 from dbus_next import DBusError
@@ -45,6 +46,11 @@ PAGE_TIMEOUT_ADVICE = (
     "is out of range: Bluetooth Classic is good for about ten metres."
 )
 
+
+# libairmini hands the pairing key back as hex. protocol.md records it as 64
+# characters; the bound is loose because the check is here to catch a status
+# string being stored as a key, not to pin a length we only half know.
+_PAIR_KEY = re.compile(r"[0-9a-fA-F]{32,128}")
 
 class Busy(Exception):
     pass
@@ -291,9 +297,9 @@ class Controller:
             await self._scan_finished()
             dev = await self._reselect(dev)
             if dev["rssi"] is None:
-                log.warning(
-                    "Still not seen. The machine is out of range, or not in pairing mode: "
-                    "it only answers while it is."
+                log.info(
+                    "Still not seen; paging anyway. BlueZ often holds enough to reach a "
+                    "machine it has not heard from in the last few seconds."
                 )
 
         # The controller finishes the inquiry window it is in before it pages.
@@ -381,12 +387,12 @@ class Controller:
         log.info("Pairing with the machine via SRP-6a.")
         result = await asyncio.wait_for(session.pair(pin), HANDSHAKE_TIMEOUT)
         log.info("Paired. State: %s", session.state)
-        key = result.get("masterPairKey") if isinstance(result, dict) else None
+        key = master_pair_key(result)
         if key:
             store.remember_master_pair_key(self.selected, key)
         else:
-            log.warning("No masterPairKey in the pairing result; the PIN will be needed again.")
-            log.warning("Result keys: %s", sorted(result) if isinstance(result, dict) else type(result).__name__)
+            log.warning("No pairing key in the result; the PIN will be needed again.")
+            log.warning("The result was %s.", type(result).__name__)
         await self._reads(session)
 
     async def _reconnect(self, session):
@@ -433,12 +439,42 @@ class Controller:
             log.info("All four reads returned.")
 
 
+def master_pair_key(result):
+    """Pull the pairing key out of whatever libairmini handed back.
+
+    It answers `airmini_pair` with the key as a bare hex string rather than as
+    JSON, so session._decode cannot parse it and passes the text through
+    unchanged. The note this was written from described a
+    `{"masterPairKey": ...}` object, so take either shape.
+
+    Checked rather than trusted: storing the wrong string is a reconnect that
+    fails every night from then on, and the failure would look like the
+    machine's fault. Never logged -- hold this and no PIN is ever needed
+    again, which is the whole point of it.
+    """
+    candidate = result.get("masterPairKey") if isinstance(result, dict) else result
+    if not isinstance(candidate, str):
+        return None
+    key = candidate.strip()
+    if not _PAIR_KEY.fullmatch(key):
+        log.warning("The pairing result is not a key: %d characters, not hex.", len(key))
+        return None
+    log.info("Pairing returned a %d-character key.", len(key))
+    return key
+
+
 def _dump(title, value):
-    """Log a JSON result so it can be lifted straight out of the add-on log."""
-    log.info("--- %s ---", title)
+    """Log a result in full, at debug level.
+
+    The page lays readings out now, so this is no longer how anyone reads
+    them -- but a whole machine's JSON is exactly what is worth pasting into
+    an issue, and at info level ninety lines of it buried everything else in
+    the activity log. AIRSUPPLY_LOG_LEVEL=debug brings it back.
+    """
+    log.debug("--- %s ---", title)
     if value is None:
-        log.info("(empty)")
+        log.debug("(empty)")
         return
     text = value if isinstance(value, str) else json.dumps(value, indent=2, sort_keys=True)
     for line in text.splitlines():
-        log.info("%s", line)
+        log.debug("%s", line)

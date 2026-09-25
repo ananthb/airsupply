@@ -26,10 +26,13 @@ jobs:
         with:
           python-version: '3.x'
 
-      # The image build runs these too, but only what ships in the image is
-      # there to run them against. Here the Elm source is present, so the
-      # check that the page's decoders still match the state the add-on sends
-      # actually runs instead of skipping.
+      - run: pip install -r requirements.txt
+        working-directory: airsupply
+
+      # The image build runs these too, but only against what ships in it.
+      # Here the Elm source is present, so the check that the page's decoders
+      # still match the state the add-on sends actually runs rather than
+      # skipping itself.
       - run: python3 -m unittest discover -s tests -v
         working-directory: airsupply
         env:
