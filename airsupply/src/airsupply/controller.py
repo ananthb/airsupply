@@ -47,13 +47,7 @@ RADIO_SETTLE = 2.0
 PAIR_ATTEMPTS = 3
 PAIR_RETRY_PAUSE = 4.0
 
-PAGE_TIMEOUT_ADVICE = (
-    "The machine never answered (Page Timeout). The AirMini only accepts a "
-    "connection while it is in pairing mode, and it leaves pairing mode after "
-    "a short while -- press its Bluetooth button again and press Bond within "
-    "a few seconds of the machine lighting up. If that keeps failing, the host "
-    "is out of range: Bluetooth Classic is good for about ten metres."
-)
+PAGE_TIMEOUT_ADVICE = "No answer. Put the machine in pairing mode and try again."
 
 
 # libairmini answers a completed pairing with
@@ -193,7 +187,7 @@ class Controller:
         try:
             self.adapter, self.devices = await adapter.snapshot(self.bus)
         except Exception as err:  # noqa: BLE001
-            log.error("Could not read BlueZ's object tree: %s", err)
+            log.error("Could not list Bluetooth devices: %s", err)
         self._last_refresh = time.monotonic()
 
     def _selected_device(self):
@@ -289,7 +283,7 @@ class Controller:
         if self.scanning:
             return
         if not self.adapter:
-            raise RuntimeError("no Bluetooth adapter is visible over D-Bus")
+            raise RuntimeError("No Bluetooth adapter.")
         self.scanning = True
         self._scan_stop = asyncio.Event()
         self._scan_task = asyncio.create_task(self._scan(seconds))
@@ -299,7 +293,7 @@ class Controller:
         stop = self._scan_stop
         try:
             await adapter.start_discovery(self.bus, path)
-            log.info("Scanning for %ds. Put the AirMini in pairing mode now.", seconds)
+            log.info("Scanning %ds.", seconds)
             try:
                 # Ends early if the bond step asks for the radio back.
                 await asyncio.wait_for(stop.wait(), seconds)
@@ -339,7 +333,7 @@ class Controller:
         address = (address or "").upper()
         device = next((d for d in self.devices if d["address"] == address), None)
         if device is None and address not in store.machines():
-            raise ValueError(f"{address} is not a machine BlueZ knows about")
+            raise ValueError(f"Unknown machine: {address}.")
         store.add(address, (device or {}).get("name", ""))
         store.select(address)
         self.selected = address
@@ -349,10 +343,10 @@ class Controller:
         """Say which of Home Assistant's people a machine belongs to."""
         address = (address or self.selected or "").upper()
         if not address:
-            raise RuntimeError("no machine chosen")
+            raise RuntimeError("No machine chosen.")
         person_id = person_id or None
         if person_id and not any(person.id == person_id for person in self.people):
-            raise ValueError("Home Assistant does not know that person")
+            raise ValueError("No such person in Home Assistant.")
         store.assign(address, person_id)
         self._republish(address)
 
@@ -375,15 +369,15 @@ class Controller:
     async def _bond(self):
         dev = self._selected_device()
         if dev is None:
-            raise RuntimeError("no machine selected")
+            raise RuntimeError("No machine selected.")
         if dev["paired"]:
             log.info("%s is already bonded.", dev["address"])
             return
         if not self.agent_ok:
-            raise RuntimeError("no pairing agent; see the log from start-up")
+            raise RuntimeError("No pairing agent.")
 
         dev = await self._ready_to_page(dev)
-        log.info("Bonding with %s. Watch the machine and this page for a code.", dev["address"])
+        log.info("Bonding with %s.", dev["address"])
         for attempt in range(1, PAIR_ATTEMPTS + 1):
             try:
                 await adapter.pair(self.bus, dev["path"])
@@ -392,7 +386,7 @@ class Controller:
                 if not adapter.is_page_timeout(err):
                     raise
                 log.warning(
-                    "Attempt %d of %d: the machine did not answer the page (%s).",
+                    "Attempt %d/%d: no answer (%s).",
                     attempt, PAIR_ATTEMPTS, err.text or err.type,
                 )
                 if attempt == PAIR_ATTEMPTS:
@@ -418,24 +412,19 @@ class Controller:
         it does not inquire, and it does not block a page. Ours does.
         """
         if self.scanning:
-            log.info("Stopping our scan: the adapter will not page while it is inquiring.")
+            log.info("Stopping the scan to page.")
             await self.stop_scan()
             dev = await self._reselect(dev)
 
         if dev["rssi"] is None:
             log.info(
-                "BlueZ has not seen %s recently, so what it holds is too stale to page with. "
-                "Inquiring for %ds -- put the AirMini into pairing mode now.",
-                dev["address"], REFRESH_SCAN_SECONDS,
+                "Not seen recently; inquiring %ds first.", REFRESH_SCAN_SECONDS,
             )
             self.scan(REFRESH_SCAN_SECONDS)
             await self._scan_finished()
             dev = await self._reselect(dev)
             if dev["rssi"] is None:
-                log.info(
-                    "Still not seen; paging anyway. BlueZ often holds enough to reach a "
-                    "machine it has not heard from in the last few seconds."
-                )
+                log.info("Still not seen; paging anyway.")
 
         # The controller finishes the inquiry window it is in before it pages.
         await asyncio.sleep(RADIO_SETTLE)
@@ -447,8 +436,7 @@ class Controller:
         fresh = self._selected_device()
         if fresh is None:
             raise RuntimeError(
-                f"BlueZ no longer knows about {dev['address']}. Scan again with the "
-                "machine in pairing mode."
+                "Machine gone. Scan again."
             )
         return fresh
 
@@ -477,9 +465,9 @@ class Controller:
         if dev is not None and self.adapter:
             try:
                 await adapter.remove(self.bus, self.adapter["path"], dev["path"])
-                log.info("Removed %s from BlueZ.", dev["address"])
+                log.info("Unpaired %s.", dev["address"])
             except Exception as err:  # noqa: BLE001
-                log.warning("Could not remove the device from BlueZ: %s", err)
+                log.warning("Could not unpair the machine: %s", err)
         if self.selected:
             gone = self.selected
             self.publisher.forget(gone)
@@ -494,11 +482,7 @@ class Controller:
         address = (address or self.selected or "").upper()
         dev = next((d for d in self.devices if d["address"] == address), None)
         if dev is None:
-            raise RuntimeError(
-                f"Bluetooth cannot see {address or 'any machine'} at the moment. "
-                "It is switched off, out of range, or has not been heard from since "
-                "the last scan."
-            )
+            raise RuntimeError("Machine not in range.")
         if not dev["paired"]:
             raise RuntimeError("the Bluetooth bond is missing; do that step first")
 
@@ -531,15 +515,14 @@ class Controller:
         if key:
             store.remember_master_pair_key(self.selected, key)
         else:
-            log.warning("No pairing key in the result; the PIN will be needed again.")
-            log.warning("The result was %s.", type(result).__name__)
+            log.warning("No pairing key in the result (%s).", type(result).__name__)
         await self._reads(session, self.selected)
 
     async def _reconnect(self, session, address):
         key = store.master_pair_key(address)
         if not key:
-            raise RuntimeError("no pairing key stored; pair with the PIN first")
-        log.info("Reconnecting to %s with its stored key (no PIN needed).", address)
+            raise RuntimeError("No pairing key. Enter the PIN first.")
+        log.info("Reconnecting to %s.", address)
         await asyncio.wait_for(session.open_session(key), HANDSHAKE_TIMEOUT)
         log.info("Session open. State: %s", session.state)
         await self._reads(session, address)

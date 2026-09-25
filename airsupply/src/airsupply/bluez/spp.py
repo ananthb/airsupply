@@ -56,7 +56,7 @@ class SerialProfile(ServiceInterface):
 
     @method()
     def Release(self):  # noqa: N802
-        log.info("Profile released by BlueZ.")
+        log.info("Serial profile released.")
 
 
 async def register(bus):
@@ -82,7 +82,7 @@ async def register(bus):
             "RequireAuthorization": Variant("b", False),
         },
     )
-    log.info("Registered SPP profile at %s", c.PROFILE_PATH)
+    log.debug("Registered the serial profile at %s", c.PROFILE_PATH)
     return profile
 
 
@@ -100,22 +100,19 @@ def explain(err):
     text = str(getattr(err, "text", "") or err).lower().replace("-", " ")
     if "timeout" in text:
         return (
-            "The machine did not answer. It is switched off, out of range, or "
-            "its Bluetooth is asleep -- an AirMini only listens for a while "
-            "after it is powered on."
+            "No answer. Machine off or out of range."
         )
     if "profile unavailable" in text:
         return (
-            "The machine answered but offered no serial port. If it has been "
-            "factory reset, forget it here and set it up again."
+            "No serial port on the machine."
         )
     if "already connected" in text:
-        return "Something else is connected to the machine; only one thing can be."
+        return "Machine in use elsewhere."
     if "in progress" in text:
-        return "A connection to the machine is already being made."
+        return "Already connecting."
     if "refused" in text or "not available" in text:
-        return "The machine refused the connection."
-    return f"The serial channel did not open: {getattr(err, 'text', None) or err}"
+        return "Connection refused."
+    return f"Channel did not open: {getattr(err, 'text', None) or err}"
 
 
 async def connect(bus, device_path, profile, timeout=30.0):
@@ -130,8 +127,7 @@ async def connect(bus, device_path, profile, timeout=30.0):
 
     if not await device.get_paired():
         raise NotReachable(
-            "The Bluetooth pairing is missing. It has to exist before the serial "
-            "channel will open, and it is separate from the machine's own PIN."
+            "Not paired."
         )
 
     profile.reset()
@@ -146,9 +142,7 @@ async def connect(bus, device_path, profile, timeout=30.0):
         _, fd, _ = await asyncio.wait_for(profile.connected, timeout)
     except asyncio.TimeoutError as err:
         raise NotReachable(
-            "Bluetooth connected but the machine never opened the channel. "
-            "Something is wrong inside the add-on rather than in the bedroom; "
-            "set log_level to debug and send the log."
+            "Connected, but the channel never opened."
         ) from err
 
     log.info("Serial channel open on fd %s.", fd)

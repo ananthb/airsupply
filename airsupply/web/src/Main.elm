@@ -58,7 +58,7 @@ type alias Machine =
     }
 
 
-{-| Something BlueZ can see, which may or may not be a machine of ours yet.
+{-| Something the adapter can see, which may or may not be a machine of ours yet.
 -}
 type alias Found =
     { address : String
@@ -268,19 +268,19 @@ wrong err =
             url ++ " is not a URL."
 
         Http.Timeout ->
-            "It did not answer in time."
+            "Timed out."
 
         Http.NetworkError ->
-            "Nothing answered; it may have stopped."
+            "No response."
 
         Http.BadStatus code ->
-            "It answered " ++ String.fromInt code ++ "."
+            "Answered " ++ String.fromInt code ++ "."
 
         Http.BadBody why ->
             -- Nearly always a page older than the add-on serving it, which
             -- is a thing a browser can do by holding an old script. Say so,
             -- because "cannot read" sounds like the add-on is broken.
-            "This page looks older than the add-on. Reload it. " ++ why
+            "This page is older than the add-on. Reload it."
 
 
 
@@ -637,10 +637,10 @@ lampText : State -> String
 lampText state =
     case ( state.busy, state.scanning ) of
         ( Just "bond", _ ) ->
-            "Pairing with Bluetooth."
+            "Pairing."
 
         ( Just "pair", _ ) ->
-            "Connecting to the machine."
+            "Connecting."
 
         ( Just "read", _ ) ->
             "Reading."
@@ -652,7 +652,7 @@ lampText state =
             other
 
         ( Nothing, True ) ->
-            "Looking for machines."
+            "Looking."
 
         ( Nothing, False ) ->
             idleText state
@@ -662,16 +662,16 @@ idleText : State -> String
 idleText state =
     case state.stage of
         NoAdapter ->
-            "Home Assistant has no Bluetooth adapter."
+            "No Bluetooth adapter."
 
         Choose ->
             "Not set up yet."
 
         NeedsPairing ->
-            "Not paired with Bluetooth."
+            "Not paired."
 
         NeedsPin ->
-            "Paired. Waiting for the machine's PIN."
+            "Needs the machine's PIN."
 
         Ready ->
             case Maybe.andThen .lastRead state.machine of
@@ -679,7 +679,7 @@ idleText state =
                     "Read at " ++ clock at
 
                 Nothing ->
-                    "Set up. Nothing read yet."
+                    "Nothing read yet."
 
 
 {-| "2026-09-26 00:34:09" as "00:34".
@@ -733,7 +733,7 @@ setup model state =
         NoAdapter ->
             [ div [ class "card" ]
                 [ p [ class "note" ]
-                    [ text "Home Assistant cannot see a Bluetooth adapter, so nothing here can work. Check that the host has one and that the Bluetooth integration is running." ]
+                    [ text "This host has no Bluetooth adapter." ]
                 ]
             ]
 
@@ -742,7 +742,7 @@ setup model state =
 
         NeedsPairing ->
             [ div [ class "card" ]
-                [ p [ class "note" ] [ text "Put the AirMini in pairing mode and pair within a few seconds of it lighting up. It only answers while it is in pairing mode." ]
+                [ p [ class "note" ] [ text "Put the machine in pairing mode, then pair." ]
                 , div [ class "row-btns" ]
                     [ button [ class "go", onClick (Send "bond" []), disabled working ] [ text "Pair" ]
                     , scanButton state
@@ -752,7 +752,7 @@ setup model state =
 
         NeedsPin ->
             [ div [ class "card" ]
-                [ p [ class "note" ] [ text "Type the PIN on the machine's screen. Once only: airsupply keeps the key the machine gives back, and connects with that from then on." ]
+                [ p [ class "note" ] [ text "Type the PIN on the machine's screen. Needed once." ]
                 , Html.form [ class "row-btns", onSubmit SendPin ]
                     [ input
                         [ value model.pin
@@ -782,7 +782,7 @@ adding model state =
 
     else
         [ div [ class "card" ]
-            [ p [ class "note" ] [ text "Put the AirMini in pairing mode, then look for it. It is only discoverable while it is." ]
+            [ p [ class "note" ] [ text "Put the machine in pairing mode, then look." ]
             , div [ class "row-btns" ]
                 [ scanButton state
                 , if List.isEmpty state.machines then
@@ -828,7 +828,7 @@ foundList state =
     div []
         [ if List.isEmpty candidates then
             p [ class "note", style "margin-top" "12px" ]
-                [ text "No new AirMini found. If one is in pairing mode and still does not appear, Home Assistant is out of range." ]
+                [ text "No new machines found." ]
 
           else
             table [ class "found" ] (List.map foundRow candidates)
@@ -900,7 +900,7 @@ question model state ask =
     div [ class "card ask" ]
         (case ask.kind of
             "pincode" ->
-                [ p [] [ text ("Bluetooth PIN for " ++ who ++ ". If the machine shows one, type it; otherwise try 0000.") ]
+                [ p [] [ text ("Bluetooth PIN for " ++ who ++ ", or 0000.") ]
                 , Html.form [ class "row-btns", onSubmit SendReply ]
                     [ input [ value model.reply, onInput ReplyTyped, inputmode "numeric", autocomplete False, attribute "autofocus" "", attribute "aria-label" "Bluetooth PIN" ] []
                     , button [ class "go" ] [ text "Send" ]
@@ -909,7 +909,7 @@ question model state ask =
                 ]
 
             "passkey" ->
-                [ p [] [ text ("Type the six-digit code " ++ who ++ " is showing.") ]
+                [ p [] [ text ("Six-digit code shown on " ++ who ++ ".") ]
                 , Html.form [ class "row-btns", onSubmit SendReply ]
                     [ input [ value model.reply, onInput ReplyTyped, inputmode "numeric", autocomplete False, attribute "autofocus" "", attribute "aria-label" "Six-digit code" ] []
                     , button [ class "go" ] [ text "Send" ]
@@ -918,7 +918,7 @@ question model state ask =
                 ]
 
             "confirm" ->
-                [ p [] [ text ("Does " ++ who ++ " show this code?") ]
+                [ p [] [ text ("Does " ++ who ++ " show this?") ]
                 , p [ class "code" ] [ text code ]
                 , div [ class "row-btns" ]
                     [ button [ class "go", onClick (Send "answer" [ ( "accept", E.bool True ) ]) ] [ text "It matches" ]
@@ -935,7 +935,7 @@ question model state ask =
                 ]
 
             _ ->
-                [ p [] [ text ("Enter this code on " ++ who ++ ".") ]
+                [ p [] [ text ("Enter this on " ++ who ++ ".") ]
                 , p [ class "code" ] [ text code ]
                 ]
         )
@@ -1116,10 +1116,10 @@ peopleNote : State -> Html Msg
 peopleNote state =
     case ( state.peopleProblem, List.isEmpty state.people ) of
         ( Just why, _ ) ->
-            p [ class "note" ] [ text ("Home Assistant's people are not available: " ++ why) ]
+            p [ class "note" ] [ text ("People unavailable: " ++ why) ]
 
         ( Nothing, True ) ->
-            p [ class "note" ] [ text "Home Assistant has no people to assign a machine to yet." ]
+            p [ class "note" ] [ text "No people in Home Assistant." ]
 
         ( Nothing, False ) ->
             text ""
@@ -1183,13 +1183,13 @@ publishingNote state =
 publishingProblem : Publishing -> Maybe String
 publishingProblem publishing =
     if not publishing.configured then
-        Just "No MQTT broker, so nothing reaches Home Assistant. Install the Mosquitto add-on and restart this one."
+        Just "No MQTT broker. Install the Mosquitto add-on."
 
     else if publishing.connected then
         Nothing
 
     else
-        Maybe.map (\why -> "Not publishing to Home Assistant: " ++ why) publishing.problem
+        Maybe.map (\why -> "Not publishing: " ++ why) publishing.problem
 
 
 

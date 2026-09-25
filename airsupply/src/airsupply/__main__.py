@@ -43,7 +43,7 @@ async def run():
     # carries a file descriptor the bus is not prepared to receive, and the
     # message is rejected rather than delivered.
     bus = await MessageBus(bus_type=BusType.SYSTEM, negotiate_unix_fd=True).connect()
-    log.info("Connected to the system bus.")
+    log.debug("Connected to the system bus.")
 
     controller = Controller(bus, version)
     await controller.start()

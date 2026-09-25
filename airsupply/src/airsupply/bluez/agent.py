@@ -78,7 +78,7 @@ class PairingAgent(ServiceInterface):
             self.prompt.future.set_exception(DBusError(CANCELED, "superseded"))
         prompt = Prompt(kind, device, value)
         self._set(prompt)
-        log.info("BlueZ asks: %s%s", kind, f" ({value})" if value else "")
+        log.info("Bluetooth asks for a %s%s.", kind, f" ({value})" if value else "")
         try:
             return await asyncio.wait_for(prompt.future, ANSWER_TIMEOUT)
         except asyncio.TimeoutError:
@@ -93,13 +93,13 @@ class PairingAgent(ServiceInterface):
         prompt = Prompt("display", device, value)
         prompt.future.set_result(None)
         self._set(prompt)
-        log.info("BlueZ says: enter %s on the machine.", value)
+        log.info("Enter %s on the machine.", value)
 
     # --- org.bluez.Agent1 --------------------------------------------------
 
     @method()
     def Release(self):  # noqa: N802
-        log.info("Pairing agent released by BlueZ.")
+        log.info("Pairing agent released.")
 
     @method()
     async def RequestPinCode(self, device: "o") -> "s":  # noqa: N802
@@ -132,7 +132,7 @@ class PairingAgent(ServiceInterface):
 
     @method()
     def Cancel(self):  # noqa: N802
-        log.info("BlueZ cancelled the pending prompt.")
+        log.info("Bluetooth cancelled the question.")
         if self.prompt is not None and not self.prompt.future.done():
             self.prompt.future.set_exception(DBusError(CANCELED, "cancelled by BlueZ"))
 
@@ -149,4 +149,4 @@ async def register(bus, agent):
     except DBusError as err:
         # Not fatal: BlueZ still prefers the agent of the app that called Pair.
         log.warning("Could not become the default agent: %s", err)
-    log.info("Pairing agent registered at %s", AGENT_PATH)
+    log.debug("Pairing agent registered at %s", AGENT_PATH)

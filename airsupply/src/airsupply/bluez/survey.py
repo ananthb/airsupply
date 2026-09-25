@@ -53,7 +53,7 @@ async def survey(bus):
     }
 
     if not adapters:
-        log.error("No Bluetooth adapter visible over D-Bus. Nothing can work.")
+        log.error("No Bluetooth adapter. Nothing can work.")
         return []
 
     log.info("Adapters:")
@@ -74,7 +74,7 @@ async def survey(bus):
             "does, which is why the bond stops it first.)"
         )
 
-    log.info("Devices known to BlueZ: %d", len(devices))
+    log.info("Bluetooth devices seen: %d", len(devices))
 
     candidates = [(p, d) for p, d in devices.items() if looks_like_airmini(d)]
     if not candidates:
@@ -99,7 +99,7 @@ async def survey(bus):
         log.info("  Paired    %s   Connected %s", d.get("Paired"), d.get("Connected"))
         uuids = [u.lower() for u in d.get("UUIDs", [])]
         if c.SPP_UUID in uuids:
-            log.info("  SPP       yes -- Serial Port service present")
+            log.info("  Serial    yes")
         else:
             log.warning(
                 "  SPP       not listed. BlueZ may not have run SDP yet; "
