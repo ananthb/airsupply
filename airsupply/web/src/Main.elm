@@ -261,7 +261,10 @@ wrong err =
             "It answered " ++ String.fromInt code ++ "."
 
         Http.BadBody why ->
-            "It answered something this page cannot read. " ++ why
+            -- Nearly always a page older than the add-on serving it, which
+            -- is a thing a browser can do by holding an old script. Say so,
+            -- because "cannot read" sounds like the add-on is broken.
+            "This page looks older than the add-on. Reload it. " ++ why
 
 
 

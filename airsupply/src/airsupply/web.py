@@ -39,7 +39,25 @@ ACTIONS = {
 
 
 async def index(request):
-    return web.FileResponse(INDEX, headers=NO_STORE)
+    """The page, with the add-on's version stamped into the script it loads.
+
+    no-store on the response was not enough, and could not be: a browser that
+    already holds elm.js does not ask again, so a header saying not to keep it
+    arrives only for people who never had the problem. The page then runs the
+    previous version's decoders against this version's state and dies on a
+    field it has never heard of.
+
+    A version in the URL settles it rather than asking a cache to behave.
+    `assets/elm.js?v=0.4.2` is simply not the thing anybody has cached, so a
+    new add-on gets its own page whatever any cache in between believes.
+    """
+    body = INDEX.read_text(encoding="utf-8")
+    version = request.app["ctl"].version or "dev"
+    return web.Response(
+        text=body.replace("__AIRSUPPLY_VERSION__", version),
+        content_type="text/html",
+        headers=NO_STORE,
+    )
 
 
 async def state(request, status=200):
