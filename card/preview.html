@@ -1,0 +1,94 @@
+<!doctype html>
+<!--
+  The card with invented data, for looking at it without a Home Assistant.
+  Open this file in a browser. The stubs below are the smallest thing that
+  stands in for hass: a handful of states and one WebSocket answer.
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>airsupply card preview</title>
+<style>
+  :root {
+    --primary-text-color: #212121; --secondary-text-color: #727272;
+    --primary-color: #03a9f4; --warning-color: #ffa600; --success-color: #0f9d58;
+    --error-color: #db4437; --divider-color: #e0e0e0; --disabled-text-color: #bdbdbd;
+    --card-background-color: #fff; --ha-card-border-radius: 12px;
+  }
+  body.dark {
+    --primary-text-color: #e1e1e1; --secondary-text-color: #9b9b9b;
+    --divider-color: #474747; --disabled-text-color: #6f6f6f;
+    --card-background-color: #1c1c1c;
+    background: #111;
+  }
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 28px;
+         background: #f2f3f5; display: flex; flex-direction: column; gap: 18px; align-items: center; }
+  .frame { width: 100%; max-width: 420px; }
+  button { font: inherit; padding: 6px 12px; border-radius: 8px; border: 1px solid #ccc;
+           background: #fff; cursor: pointer; }
+</style>
+</head>
+<body>
+<button onclick="document.body.classList.toggle('dark')">Toggle dark</button>
+<div class="frame"><airsupply-card id="one"></airsupply-card></div>
+<div class="frame"><airsupply-card id="two"></airsupply-card></div>
+
+<script type="module">
+  // ha-card is Home Assistant's; here it is a rounded box.
+  customElements.define("ha-card", class extends HTMLElement {
+    connectedCallback() {
+      this.style.cssText =
+        "display:block;background:var(--card-background-color);border-radius:12px;" +
+        "box-shadow:0 2px 6px rgba(0,0,0,.12)";
+    }
+  });
+
+  await import("./airsupply-card.js");
+
+  const DAY = 86400000;
+  const nights = [6.9, 7.4, 3.2, 6.1, 7.8, 5.4, 0, 6.6, 7.1, 6.8, 2.4, 7.2, 6.4, 6.2];
+
+  function stats(entity) {
+    const rows = [];
+    const noon = new Date(); noon.setHours(12, 0, 0, 0);
+    if (Date.now() < noon.getTime()) noon.setTime(noon.getTime() - DAY);
+    nights.forEach((hours, i) => {
+      const start = noon.getTime() - (nights.length - 1 - i) * DAY + 22 * 3600000;
+      // Spread each night over its hours, crossing midnight as a real one does.
+      let left = hours;
+      for (let h = 0; left > 0; h += 1, left -= 1) {
+        rows.push({ start: start + h * 3600000, change: Math.min(1, left) });
+      }
+    });
+    return { [entity]: rows };
+  }
+
+  const hass = (entity, extra) => ({
+    states: {
+      [entity]: { state: "719.3", attributes: { friendly_name: "AirMini (Ananth) Therapy hours" } },
+      ...extra,
+    },
+    callWS: async ({ statistic_ids }) => stats(statistic_ids[0]),
+  });
+
+  const asleep = "sensor.airsupply_28_68_47_18_c2_78_therapy_hours";
+  const one = document.getElementById("one");
+  one.setConfig({ entity: asleep });
+  one.hass = hass(asleep, {
+    "sensor.airsupply_28_68_47_18_c2_78_status": { state: "Standby" },
+    "binary_sensor.airsupply_28_68_47_18_c2_78_in_therapy": { state: "off" },
+    "binary_sensor.airsupply_28_68_47_18_c2_78_connected": { state: "on" },
+    "sensor.airsupply_28_68_47_18_c2_78_last_used": { state: new Date(Date.now() - 9 * 3600000).toISOString() },
+  });
+
+  const other = "sensor.airsupply_3a_11_00_00_00_02_therapy_hours";
+  const two = document.getElementById("two");
+  two.setConfig({ entity: other, title: "AirMini (Subha)" });
+  two.hass = hass(other, {
+    "binary_sensor.airsupply_3a_11_00_00_00_02_in_therapy": { state: "on" },
+    "binary_sensor.airsupply_3a_11_00_00_00_02_connected": { state: "on" },
+  });
+</script>
+</body>
+</html>

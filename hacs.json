@@ -1,0 +1,8 @@
+{
+  "name": "airsupply",
+  "content_in_root": false,
+  "filename": "airsupply-card.js",
+  "render_readme": true,
+  "hide_default_branch": true,
+  "homeassistant": "2023.4.0"
+}

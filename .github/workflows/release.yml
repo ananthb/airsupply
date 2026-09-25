@@ -101,3 +101,23 @@ jobs:
             -t "${IMAGE}:latest" \
             "${refs[@]}"
           docker buildx imagetools inspect "${IMAGE}:${{ github.ref_name }}"
+
+  # The Lovelace card ships as a release asset, which is where HACS looks for a
+  # plugin's file. Same tag as the image it draws from, because the card reads
+  # entities a particular add-on version publishes.
+  card:
+    needs: manifest
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6
+
+      - run: node --check card/airsupply-card.js
+
+      - run: node card/test.mjs
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: card/airsupply-card.js
+          generate_release_notes: true

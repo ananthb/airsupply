@@ -83,6 +83,7 @@ machine up once and shows what it last read. See the
 | `docs/protocol.md` | the transport, and what is known versus assumed |
 | `docs/verify.md` | what is confirmed against a real machine, and what is not |
 | `airsupply/` | the container image behind the Home Assistant add-on |
+| `card/` | the Lovelace card: hours per night, against the four-hour mark |
 
 `airsupply/` builds libairmini from the commit in `libairmini.pin`, wraps it
 for Python, and serves the page: an [Elm](https://elm-lang.org) application
@@ -94,6 +95,31 @@ hass-addons is that image plus a run script and an AppArmor profile.
 It writes nothing, and refuses to: `Set` is not among the methods it will send.
 
 The phone app arrives once `docs/verify.md` says it can.
+
+## The card
+
+`card/airsupply-card.js` draws each of the last fourteen nights as a bar
+against the four hours everything clinical is measured by. Home Assistant
+already has the data: therapy hours is a `total_increasing` sensor, so the
+recorder keeps the increase per hour, and a night is the increase from one
+midday to the next -- midday to midday rather than midnight to midnight,
+because a night spans midnight and calendar days would cut every one in half.
+
+Install it through HACS as a Dashboard repository pointing at this one, or
+copy the file into `config/www/` and add it as a resource. Then:
+
+```yaml
+type: custom:airsupply-card
+entity: sensor.airsupply_<machine>_therapy_hours
+```
+
+`nights` (14), `goal` (4) and `title` are the options. Everything else about
+the machine -- its state, whether it is in therapy, when it was last used --
+is found from that one entity.
+
+It carries no colours of its own: a card that ships a palette fights whatever
+theme it lands in, so it uses Home Assistant's. `card/preview.html` opens in
+any browser with invented data, for looking at it without a Home Assistant.
 
 ## Licence
 
