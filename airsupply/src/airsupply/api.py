@@ -12,6 +12,7 @@ keeps working when the machine returns a key we have never seen.
 """
 
 import collections
+import datetime
 import re
 
 # Titles for the four reads, in the order a person would want them. The keys
@@ -23,7 +24,14 @@ SECTIONS = (
     ("MachineMetrics", "Run meters"),
 )
 
-_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])")
+_CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
+
+# The two string shapes the machine answers in that are not words. Run meters
+# arrive as ISO-8601 durations ("PT2591392S") and everything dated as an ISO
+# instant; both are worth reading as what they are.
+_DURATION = re.compile(r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?")
+_INSTANT = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d")
+
 
 
 def page(raw):
@@ -144,7 +152,39 @@ def scalar(value):
         # Machine settings come back as 4.0 and 10.4 alike; a trailing .0 on
         # a pressure reads as false precision.
         return f"{value:g}"
+    if isinstance(value, str):
+        return duration(value) or instant(value) or value
     return str(value)
+
+
+def duration(value):
+    """"PT2591392S" is a run meter. Hours are how a CPAP quotes one."""
+    match = _DURATION.fullmatch(value)
+    if not match or not any(match.groups()):
+        return None
+    days, hours, minutes, seconds = (float(g or 0) for g in match.groups())
+    total = int(days * 86400 + hours * 3600 + minutes * 60 + seconds)
+    if total < 3600:
+        return f"{total // 60} min"
+    return f"{total // 3600} h {total % 3600 // 60:02d} min"
+
+
+def instant(value):
+    """An ISO timestamp, in the add-on's own timezone rather than as UTC.
+
+    Home Assistant sets the container's timezone, so this is the clock the
+    person reading the page is on -- which for "last used" is the whole point
+    of showing it.
+    """
+    if not _INSTANT.match(value):
+        return None
+    try:
+        when = datetime.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if when.tzinfo is not None:
+        when = when.astimezone()
+    return when.strftime("%d %b %Y, %H:%M")
 
 
 def _leaf(path):
