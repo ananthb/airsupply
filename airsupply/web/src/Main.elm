@@ -1002,11 +1002,18 @@ field one =
 -- ACTIVITY
 
 
+{-| The add-on's log, newest first.
+
+Newest first because the box scrolls and a browser starts it at the top, so
+oldest-first means the line you opened this to read is the one you cannot see.
+There is no JavaScript here to scroll it to the bottom for you, and this needs
+none.
+-}
 activity : State -> Html Msg
 activity state =
     details []
         [ summaryTag "Activity"
-        , pre [ class "log" ] (List.map line state.log)
+        , pre [ class "log" ] (List.map line (List.reverse state.log))
         ]
 
 

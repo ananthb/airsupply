@@ -70,7 +70,7 @@
 
   /* Readings sit on ruled paper, the way a night's trace is printed. The rule
      is the row rhythm, so the numbers line up down the page. */
-  .readings { padding: 4px 16px 8px; }
+  .readings { padding: 4px 16px 8px; margin: 0 -16px; }
   .section + .section { margin-top: 18px; }
   .row {
     display: flex; align-items: baseline; justify-content: space-between; gap: 16px;
@@ -139,8 +139,15 @@
 
   details { margin-top: 14px; }
   summary { cursor: pointer; color: var(--muted); font-size: 13.5px; }
+  /* The two boxes that grow with what the machine says. Both scroll inside
+     themselves, and `overscroll-behavior: contain` is what stops reaching the
+     bottom of one from handing the scroll to the page underneath. Capped
+     against the viewport as well as in pixels, so neither takes over a phone. */
+  pre.log, .readings {
+    max-height: min(340px, 45vh); overflow: auto; overscroll-behavior: contain;
+  }
   pre.log {
-    margin: 10px 0 0; padding: 10px 12px; max-height: 260px; overflow: auto;
+    margin: 10px 0 0; padding: 10px 12px;
     background: var(--surface); border: 1px solid var(--rule); border-radius: 8px;
     font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
     white-space: pre-wrap; overflow-wrap: anywhere;
