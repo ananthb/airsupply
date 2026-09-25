@@ -34,6 +34,7 @@ class Person:
     id = "01HXVPERSON"
     name = "Ananth"
     entity_id = "person.ananth"
+    user_id = "5f2ac0USERID"
 
 
 class StateDocument(unittest.TestCase):
@@ -137,10 +138,24 @@ class Discovery(unittest.TestCase):
     def test_the_person_is_on_every_entity_by_id(self):
         carried = entities.attributes(ADDRESS, Person(), "SW03900.01.4.0.3.50927")
         self.assertEqual("01HXVPERSON", carried["person_id"])
+        # The user id is what a dashboard compares against whoever is looking.
+        self.assertEqual("5f2ac0USERID", carried["person_user_id"])
         self.assertEqual("person.ananth", carried["person_entity_id"])
         self.assertEqual("Ananth", carried["person"])
         for payload in self.payloads:
             self.assertEqual(entities.attributes_topic(ADDRESS), payload["json_attributes_topic"])
+
+    def test_a_person_with_no_account_carries_no_user_id(self):
+        class NoAccount(Person):
+            user_id = None
+
+        carried = entities.attributes(ADDRESS, NoAccount(), None)
+        self.assertNotIn("person_user_id", carried)
+        self.assertEqual("Ananth", carried["person"])
+
+    def test_a_machine_with_nobody_carries_nothing_about_people(self):
+        carried = entities.attributes(ADDRESS, None, None)
+        self.assertEqual({"address": ADDRESS}, carried)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,7 @@ class AirsupplyCard extends HTMLElement {
     this._config = {
       nights: NIGHTS,
       goal: GOAL_HOURS,
+      only_owner: false,
       ...config,
     };
     this._nights = null;
@@ -50,8 +51,33 @@ class AirsupplyCard extends HTMLElement {
 
   set hass(hass) {
     this._hass = hass;
+    if (this._hidden()) {
+      this.style.display = "none";
+      return;
+    }
+    this.style.display = "";
     this._load();
     this._render();
+  }
+
+  /* Whose machine this is, and whether that is whoever is looking.
+   *
+   * The add-on puts the owner's Home Assistant user id on every entity, so
+   * the card follows the person assigned to the machine rather than needing
+   * user ids typed into dashboard YAML: reassign the machine and the card
+   * moves with it.
+   *
+   * This hides a card. It is not a permission -- Home Assistant has no
+   * per-entity access control, so anybody logged in can still read the
+   * sensors from developer tools or the API. It keeps somebody else's
+   * therapy off your dashboard; it does not keep it from them.
+   */
+  _hidden() {
+    if (!this._config?.only_owner) return false;
+    const owner = this._hass?.states?.[this._config.entity]?.attributes?.person_user_id;
+    // A machine nobody owns is not somebody else's, so it stays visible.
+    if (!owner) return false;
+    return this._hass?.user?.id !== owner;
   }
 
   /* --- the nights ------------------------------------------------------- */

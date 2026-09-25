@@ -117,6 +117,24 @@ entity: sensor.airsupply_<machine>_therapy_hours
 the machine -- its state, whether it is in therapy, when it was last used --
 is found from that one entity.
 
+### Only on its owner's dashboard
+
+```yaml
+type: custom:airsupply-card
+entity: sensor.airsupply_<machine>_therapy_hours
+only_owner: true
+```
+
+The card then appears only for the Home Assistant user the machine is
+assigned to on the add-on's page. It follows that assignment rather than
+needing user ids typed in here, so reassigning a machine moves its card. A
+machine nobody owns stays visible, because it is not somebody else's.
+
+**This hides a card; it is not a permission.** Home Assistant has no
+per-entity access control, so anyone logged in can still read the sensors
+from developer tools or the API. It keeps somebody else's therapy off your
+dashboard. It does not keep it from them.
+
 It carries no colours of its own: a card that ships a palette fights whatever
 theme it lands in, so it uses Home Assistant's. `card/preview.html` opens in
 any browser with invented data, for looking at it without a Home Assistant.

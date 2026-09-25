@@ -117,6 +117,8 @@ jobs:
 
       - run: node card/test.mjs
 
+      - run: node card/owner.test.mjs
+
       - uses: softprops/action-gh-release@v2
         with:
           files: card/airsupply-card.js

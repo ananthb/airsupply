@@ -339,7 +339,10 @@ def attributes(address, person, firmware):
     """What every entity for this machine carries alongside its value.
 
     The person's stable id is here because this is the only place Home
-    Assistant can be told which of its people a reading belongs to.
+    Assistant can be told which of its people a reading belongs to, and their
+    `user_id` because that is the one a dashboard can compare against whoever
+    is looking at it. A person with no Home Assistant account has none, and
+    nothing can be shown only to them.
     """
     out = {"address": address}
     if firmware:
@@ -348,6 +351,8 @@ def attributes(address, person, firmware):
         out["person"] = person.name
         out["person_id"] = person.id
         out["person_entity_id"] = person.entity_id
+        if person.user_id:
+            out["person_user_id"] = person.user_id
     return out
 
 
