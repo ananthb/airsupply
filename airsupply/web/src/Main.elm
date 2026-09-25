@@ -8,12 +8,13 @@ is no JavaScript, and nothing to keep in step with any.
 Every request answers with the add-on's entire state rather than a patch of
 it, so there is nothing here to merge and nothing that can go stale in one
 corner while the rest moves on. Polling takes its pace from that state -- a
-second apart while the machine is doing something, four while it is not --
+second apart while a machine is doing something, four while it is not --
 which is a decision that belongs where the state is.
 
-The page has one subject, the machine, and one job: say whether airsupply is
-talking to it and show what it last read. Setting it up happens once, so it
-takes up room only while it is unfinished.
+The page's subject is a machine and whose it is. What it leads with is the
+handful of things a reading is actually about; everything the machine said is
+underneath, for when that is what you want. Setting a machine up happens once,
+so it takes up room only while it is unfinished.
 -}
 
 import Browser
@@ -38,7 +39,28 @@ type Stage
     | Ready
 
 
+type alias Person =
+    { id : String, entityId : String, name : String }
+
+
 type alias Machine =
+    { address : String
+    , name : String
+    , signal : Maybe Int
+    , classic : Bool
+    , serial : Bool
+    , bonded : Bool
+    , paired : Bool
+    , person : Maybe Person
+    , personId : Maybe String
+    , missingPerson : Bool
+    , lastRead : Maybe String
+    }
+
+
+{-| Something BlueZ can see, which may or may not be a machine of ours yet.
+-}
+type alias Found =
     { address : String
     , name : String
     , signal : Maybe Int
@@ -47,6 +69,10 @@ type alias Machine =
     , bonded : Bool
     , candidate : Bool
     }
+
+
+type alias Publishing =
+    { configured : Bool, connected : Bool, problem : Maybe String }
 
 
 type alias Field =
@@ -77,8 +103,13 @@ type alias State =
     , scanning : Bool
     , machines : List Machine
     , machine : Maybe Machine
+    , found : List Found
+    , people : List Person
+    , peopleProblem : Maybe String
+    , publishing : Publishing
     , question : Maybe Question
     , problem : Maybe String
+    , summary : List Field
     , reading : Maybe Reading
     , log : List Line
     }
@@ -86,13 +117,10 @@ type alias State =
 
 {-| What the page knows about the add-on.
 
-Three states rather than the usual four. There is no "not asked": `init`
-fires the first request, so the page is never sitting on a question it has
-not put. And a failure after the first success keeps the state it already
-had, because a poll that times out should not blank a reading somebody is
-reading -- `Live state (Just err)` is where a page like this spends most of
-any bad minute, and it is the state a plain
-`NotAsked | Loading | Failure e | Success a` cannot hold.
+Three states, not four. There is no "not asked": `init` fires the first
+request, so the page is never sitting on a question it has not put. And a
+failure after the first success keeps the state it already had, because a
+poll that times out should not blank a reading somebody is reading.
 -}
 type Link
     = Starting
@@ -257,10 +285,10 @@ act kind extras =
 {-| Decode the body whatever the status line says.
 
 A refused action answers 4xx and puts the reason in the state it sends back,
-which is the thing the page most needs at that moment --
-`Http.expectJson` would discard it along with the rest of the body and leave
-only the number. So the status is kept for the one case where it is all there
-is: a body that is not state at all.
+which is the thing the page most needs at that moment -- `Http.expectJson`
+would discard it along with the rest of the body and leave only the number.
+So the status is kept for the one case where it is all there is: a body that
+is not state at all.
 -}
 expectState : Http.Expect Msg
 expectState =
@@ -296,20 +324,21 @@ decodeState body =
 
 stateDecoder : D.Decoder State
 stateDecoder =
-    let
-        cons =
-            D.map8 State
-                (D.field "version" D.string)
-                (D.field "has_adapter" D.bool)
-                (D.field "stage" stageDecoder)
-                (D.field "busy" (D.nullable D.string))
-                (D.field "scanning" D.bool)
-                (D.field "machines" (D.list machineDecoder))
-                (D.field "machine" (D.nullable machineDecoder))
-                (D.field "question" (D.nullable questionDecoder))
-    in
-    cons
+    D.map8 State
+        (D.field "version" D.string)
+        (D.field "has_adapter" D.bool)
+        (D.field "stage" stageDecoder)
+        (D.field "busy" (D.nullable D.string))
+        (D.field "scanning" D.bool)
+        (D.field "machines" (D.list machineDecoder))
+        (D.field "machine" (D.nullable machineDecoder))
+        (D.field "found" (D.list foundDecoder))
+        |> andMap (D.field "people" (D.list personDecoder))
+        |> andMap (D.field "people_problem" (D.nullable D.string))
+        |> andMap (D.field "publishing" publishingDecoder)
+        |> andMap (D.field "question" (D.nullable questionDecoder))
         |> andMap (D.field "problem" (D.nullable D.string))
+        |> andMap (D.field "summary" (D.list fieldDecoder))
         |> andMap (D.field "reading" (D.nullable readingDecoder))
         |> andMap (D.field "log" (D.list lineDecoder))
 
@@ -342,9 +371,33 @@ stageDecoder =
             )
 
 
+personDecoder : D.Decoder Person
+personDecoder =
+    D.map3 Person
+        (D.field "id" D.string)
+        (D.field "entity_id" D.string)
+        (D.field "name" D.string)
+
+
 machineDecoder : D.Decoder Machine
 machineDecoder =
-    D.map7 Machine
+    D.map8 Machine
+        (D.field "address" D.string)
+        (D.field "name" D.string)
+        (D.field "signal" (D.nullable D.int))
+        (D.field "classic" D.bool)
+        (D.field "serial" D.bool)
+        (D.field "bonded" D.bool)
+        (D.field "paired" D.bool)
+        (D.field "person" (D.nullable personDecoder))
+        |> andMap (D.field "person_id" (D.nullable D.string))
+        |> andMap (D.field "missing_person" D.bool)
+        |> andMap (D.field "last_read" (D.nullable D.string))
+
+
+foundDecoder : D.Decoder Found
+foundDecoder =
+    D.map7 Found
         (D.field "address" D.string)
         (D.field "name" D.string)
         (D.field "signal" (D.nullable D.int))
@@ -352,6 +405,14 @@ machineDecoder =
         (D.field "serial" D.bool)
         (D.field "bonded" D.bool)
         (D.field "candidate" D.bool)
+
+
+publishingDecoder : D.Decoder Publishing
+publishingDecoder =
+    D.map3 Publishing
+        (D.field "configured" D.bool)
+        (D.field "connected" D.bool)
+        (D.field "problem" (D.nullable D.string))
 
 
 readingDecoder : D.Decoder Reading
@@ -416,8 +477,10 @@ page model state lastTry =
         , maybeView lastTry (\err -> div [ class "banner" ] [ text (notAnswering err) ])
         , maybeView state.problem (\why -> div [ class "banner" ] [ text why ])
         , maybeView state.question (question model state)
+        , summary state
         , setup model state
-        , readings state
+        , machineList model state
+        , reading state
         , [ activity state, footer state ]
         ]
 
@@ -438,7 +501,9 @@ heading state =
         [ div [ class "machine" ]
             (case state.machine of
                 Just machine ->
-                    [ h1 [] [ text (label machine) ], span [ class "addr" ] [ text machine.address ] ]
+                    [ h1 [] [ text (title machine) ]
+                    , span [ class "addr" ] [ text machine.address ]
+                    ]
 
                 Nothing ->
                     [ h1 [] [ text "No machine yet" ] ]
@@ -448,6 +513,26 @@ heading state =
             , text (lampText state)
             ]
         ]
+
+
+{-| A machine is named for whose it is, once anyone has said.
+-}
+title : Machine -> String
+title machine =
+    let
+        name =
+            if String.isEmpty machine.name then
+                machine.address
+
+            else
+                machine.name
+    in
+    case machine.person of
+        Just person ->
+            name ++ " · " ++ person.name
+
+        Nothing ->
+            name
 
 
 label : Machine -> String
@@ -464,16 +549,11 @@ lampClass state =
     if state.busy /= Nothing || state.scanning then
         "work"
 
+    else if state.stage == Ready then
+        "live"
+
     else
-        case state.stage of
-            Ready ->
-                "live"
-
-            NoAdapter ->
-                "none"
-
-            _ ->
-                "none"
+        "none"
 
 
 lampText : State -> String
@@ -517,12 +597,33 @@ idleText state =
             "Paired. Waiting for the machine's PIN."
 
         Ready ->
-            case state.reading of
-                Just reading ->
-                    "Connected. Read at " ++ reading.at ++ "."
+            case Maybe.andThen .lastRead state.machine of
+                Just at ->
+                    "Read at " ++ at ++ "."
 
                 Nothing ->
-                    "Connected. Nothing read yet."
+                    "Set up. Nothing read yet."
+
+
+
+-- THE FEW THINGS A READING IS ABOUT
+
+
+summary : State -> List (Html Msg)
+summary state =
+    if List.isEmpty state.summary then
+        []
+
+    else
+        [ div [ class "card figures" ] (List.map figure state.summary) ]
+
+
+figure : Field -> Html Msg
+figure one =
+    div [ class "figure" ]
+        [ div [ class "figure-label" ] [ text one.label ]
+        , div [ class "figure-value" ] [ text one.value ]
+        ]
 
 
 
@@ -547,7 +648,7 @@ setup model state =
             [ div [ class "card" ]
                 [ p [ class "note" ] [ text "Put the AirMini in pairing mode, then look for it. It is only discoverable while it is." ]
                 , div [ class "row-btns" ] [ scanButton state ]
-                , machineTable state
+                , foundList state
                 ]
             ]
 
@@ -557,7 +658,6 @@ setup model state =
                 , div [ class "row-btns" ]
                     [ button [ class "go", onClick (Send "bond" []), disabled working ] [ text "Pair" ]
                     , scanButton state
-                    , forgetButton working
                     ]
                 ]
             ]
@@ -577,7 +677,6 @@ setup model state =
                         ]
                         []
                     , button [ class "go", disabled (working || String.isEmpty model.pin) ] [ text "Connect" ]
-                    , forgetButton working
                     ]
                 ]
             ]
@@ -588,21 +687,13 @@ setup model state =
                 , button [ class "plain", onClick TogglePicking ]
                     [ text
                         (if model.picking then
-                            "Close"
+                            "Done"
 
                          else
-                            "Change machine"
+                            "Machines"
                         )
                     ]
                 ]
-            , if model.picking then
-                div [ class "card" ]
-                    [ div [ class "row-btns" ] [ scanButton state, forgetButton working ]
-                    , machineTable state
-                    ]
-
-              else
-                text ""
             ]
 
 
@@ -620,35 +711,33 @@ scanButton state =
         ]
 
 
-forgetButton : Bool -> Html Msg
-forgetButton working =
-    button [ class "plain", onClick (Send "forget" []), disabled working ] [ text "Forget" ]
+
+-- MACHINES, AND WHOSE THEY ARE
 
 
-machineTable : State -> Html Msg
-machineTable state =
-    let
-        candidates =
-            List.filter .candidate state.machines
+machineList : Model -> State -> List (Html Msg)
+machineList model state =
+    if not model.picking || state.stage == Choose then
+        -- While there is no machine at all, setting one up is the only thing
+        -- to do and the setup card is already showing the list.
+        []
 
-        others =
-            List.filter (not << .candidate) state.machines
-    in
-    div []
-        [ if List.isEmpty candidates then
-            p [ class "note", style "margin-top" "12px" ]
-                [ text "No AirMini found yet. If it is in pairing mode and still does not appear, Home Assistant is out of range." ]
-
-          else
-            table [] (List.map (machineRow state) candidates)
-        , if List.isEmpty others then
-            text ""
-
-          else
-            details []
-                [ summary [] [ text (String.fromInt (List.length others) ++ " other Bluetooth devices") ]
-                , table [] (List.map (machineRow state) others)
+    else
+        [ div [ class "card" ]
+            [ h2 [] [ text "Machines" ]
+            , table [] (List.map (machineRow state) state.machines)
+            , div [ class "row-btns" ]
+                [ scanButton state
+                , button
+                    [ class "plain danger"
+                    , onClick (Send "forget" [])
+                    , disabled (state.busy /= Nothing || state.machine == Nothing)
+                    ]
+                    [ text "Forget this machine" ]
                 ]
+            , foundList state
+            , peopleNote state
+            ]
         ]
 
 
@@ -658,41 +747,137 @@ machineRow state machine =
         chosen =
             Just machine.address == Maybe.map .address state.machine
     in
-    tr []
+    tr [ classList [ ( "sel", chosen ) ] ]
         [ td []
             [ div [ class "name" ] [ text (label machine) ]
             , div [ class "sub" ] [ text (machine.address ++ describe machine) ]
             ]
-        , td [ class "sig" ] [ text (signalText machine) ]
+        , td [] [ personPicker state machine ]
         , td [ class "act" ]
             [ if chosen then
-                span [ class "sub" ] [ text "in use" ]
+                span [ class "sub" ] [ text "shown" ]
 
               else
-                button [ onClick (Send "select" [ ( "address", E.string machine.address ) ]) ] [ text "Use" ]
+                button [ onClick (Send "select" [ ( "address", E.string machine.address ) ]) ] [ text "Show" ]
             ]
+        ]
+
+
+{-| Who the machine belongs to, chosen from Home Assistant's own people.
+
+Stored by their id rather than their name, so renaming a person in Home
+Assistant does not orphan a machine.
+-}
+personPicker : State -> Machine -> Html Msg
+personPicker state machine =
+    let
+        chosen =
+            Maybe.withDefault "" machine.personId
+
+        choice person =
+            option [ value person.id, selected (person.id == chosen) ] [ text person.name ]
+
+        nobody =
+            option [ value "", selected (chosen == "") ] [ text "nobody" ]
+
+        gone =
+            if machine.missingPerson then
+                [ option [ value chosen, selected True ] [ text "(person deleted)" ] ]
+
+            else
+                []
+    in
+    select
+        [ class "person"
+        , disabled (List.isEmpty state.people)
+        , onInput
+            (\id ->
+                Send "assign"
+                    [ ( "address", E.string machine.address ), ( "person_id", E.string id ) ]
+            )
+        ]
+        (nobody :: gone ++ List.map choice state.people)
+
+
+peopleNote : State -> Html Msg
+peopleNote state =
+    case ( state.peopleProblem, List.isEmpty state.people ) of
+        ( Just why, _ ) ->
+            p [ class "note" ] [ text ("Home Assistant's people are not available: " ++ why) ]
+
+        ( Nothing, True ) ->
+            p [ class "note" ] [ text "Home Assistant has no people to assign a machine to yet." ]
+
+        ( Nothing, False ) ->
+            text ""
+
+
+foundList : State -> Html Msg
+foundList state =
+    let
+        known =
+            List.map .address state.machines
+
+        candidates =
+            List.filter (\d -> d.candidate && not (List.member d.address known)) state.found
+
+        others =
+            List.filter (\d -> not d.candidate && not (List.member d.address known)) state.found
+    in
+    div []
+        [ if List.isEmpty candidates then
+            p [ class "note", style "margin-top" "12px" ]
+                [ text "No new AirMini found. If one is in pairing mode and still does not appear, Home Assistant is out of range." ]
+
+          else
+            table [] (List.map foundRow candidates)
+        , if List.isEmpty others then
+            text ""
+
+          else
+            details []
+                [ summaryTag (String.fromInt (List.length others) ++ " other Bluetooth devices")
+                , table [] (List.map foundRow others)
+                ]
+        ]
+
+
+foundRow : Found -> Html Msg
+foundRow device =
+    tr []
+        [ td []
+            [ div [ class "name" ] [ text (if String.isEmpty device.name then device.address else device.name) ]
+            , div [ class "sub" ] [ text device.address ]
+            ]
+        , td [ class "sig" ] [ text (signalText device.signal) ]
+        , td [ class "act" ]
+            [ button [ onClick (Send "select" [ ( "address", E.string device.address ) ]) ] [ text "Add" ] ]
         ]
 
 
 describe : Machine -> String
 describe machine =
     String.concat
-        [ if machine.classic then
+        [ if machine.paired then
             ""
 
-          else
-            "  not Bluetooth Classic"
-        , if machine.bonded then
-            "  paired"
+          else if machine.bonded then
+            "  needs its PIN"
 
           else
-            ""
+            "  not paired"
+        , case machine.signal of
+            Just dbm ->
+                "  " ++ String.fromInt dbm ++ " dBm"
+
+            Nothing ->
+                "  out of range"
         ]
 
 
-signalText : Machine -> String
-signalText machine =
-    case machine.signal of
+signalText : Maybe Int -> String
+signalText signal =
+    case signal of
         Just dbm ->
             String.fromInt dbm
                 ++ " dBm"
@@ -722,7 +907,6 @@ question model state ask =
 
         cancel =
             button [ onClick (Send "answer" [ ( "accept", E.bool False ) ]) ] [ text "Cancel" ]
-
     in
     div [ class "card ask" ]
         (case ask.kind of
@@ -769,17 +953,21 @@ question model state ask =
 
 
 
--- READINGS
+-- EVERYTHING THE MACHINE SAID
 
 
-readings : State -> List (Html Msg)
-readings state =
+reading : State -> List (Html Msg)
+reading state =
     case state.reading of
         Nothing ->
             []
 
-        Just reading ->
-            [ div [ class "card readings" ] (List.map section reading.sections) ]
+        Just whole ->
+            [ details [ class "card wide" ]
+                [ summaryTag ("Everything the machine said, at " ++ whole.at)
+                , div [ class "readings" ] (List.map section whole.sections)
+                ]
+            ]
 
 
 section : Section -> Html Msg
@@ -813,7 +1001,7 @@ field one =
 activity : State -> Html Msg
 activity state =
     details []
-        [ summary [] [ text "Activity" ]
+        [ summaryTag "Activity"
         , pre [ class "log" ] (List.map line state.log)
         ]
 
@@ -825,11 +1013,36 @@ line one =
 
 footer : State -> Html Msg
 footer state =
-    p [ class "foot" ] [ text ("airsupply " ++ state.version ++ ". Reads only; it never writes to the machine.") ]
+    p [ class "foot" ]
+        [ text ("airsupply " ++ state.version ++ ". Reads only; it never writes to the machine. ")
+        , text (publishingText state.publishing)
+        ]
+
+
+publishingText : Publishing -> String
+publishingText publishing =
+    if not publishing.configured then
+        "No MQTT broker, so nothing is published to Home Assistant."
+
+    else if publishing.connected then
+        "Publishing to Home Assistant over MQTT."
+
+    else
+        case publishing.problem of
+            Just why ->
+                "MQTT: " ++ why
+
+            Nothing ->
+                "Connecting to the MQTT broker."
 
 
 
 -- WIRING
+
+
+summaryTag : String -> Html Msg
+summaryTag text_ =
+    Html.summary [] [ text text_ ]
 
 
 inputmode : String -> Attribute msg
@@ -839,7 +1052,7 @@ inputmode =
 
 {-| How often to ask again.
 
-A second apart while the machine is doing something or waiting to be answered,
+A second apart while a machine is doing something or waiting to be answered,
 four while it is idle. The page already knows which, so the pace is read off
 the state rather than guessed at from outside it.
 -}

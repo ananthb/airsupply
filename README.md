@@ -7,13 +7,17 @@ lets you export none of it. This repo is the two consumers that fix that: a
 Home Assistant add-on that keeps the long-term record at home, and a phone app
 that can push to Home Assistant, Health Connect and Apple Health.
 
-**Status: it reaches a machine; it does not monitor one yet.** The transport is
-understood, the protocol comes from [libairmini](#the-protocol-is-not-ours),
-and the Home Assistant add-on pairs with a real AirMini from a page in the
-sidebar, then asks it for its firmware, its clock, the therapy settings and
-the run meters. Nothing is written to the machine, and nothing is kept over time
-yet. [`docs/verify.md`](docs/verify.md) records what has been confirmed
-against hardware and what has not.
+**Status: it monitors.** The transport is understood, the protocol comes from
+[libairmini](#the-protocol-is-not-ours), and the Home Assistant add-on pairs
+with a real AirMini, reads it on a schedule, and publishes what it finds over
+MQTT as a device per machine: therapy hours, when it was last used, the
+machine's state, and the pressures it is set to. Each machine is tied to one
+of Home Assistant's people by their id rather than their name, so renaming
+somebody in Home Assistant does not orphan their machine.
+
+Nothing is written to the machine. [`docs/verify.md`](docs/verify.md) records
+what has been confirmed against hardware and what has not; the gaps left are
+a night's logged data, the 25 Hz stream, and the `Set` path.
 
 ## It is not a BLE device
 

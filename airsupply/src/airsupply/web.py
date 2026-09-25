@@ -31,6 +31,7 @@ ACTIONS = {
     "select": lambda ctl, body: ctl.select(body.get("address")),
     "bond": lambda ctl, body: ctl.bond(),
     "answer": lambda ctl, body: ctl.answer(body.get("value"), bool(body.get("accept", True))),
+    "assign": lambda ctl, body: ctl.assign(body.get("address"), body.get("person_id")),
     "pair": lambda ctl, body: ctl.pair(body.get("pin")),
     "read": lambda ctl, body: ctl.read(),
     "forget": lambda ctl, body: ctl.forget(),

@@ -15,6 +15,8 @@ import collections
 import datetime
 import re
 
+from . import entities
+
 # Titles for the four reads, in the order a person would want them. The keys
 # are what controller._reads() files its results under.
 SECTIONS = (
@@ -26,32 +28,39 @@ SECTIONS = (
 
 _CAMEL = re.compile(r"(?<=[a-z0-9])(?=[A-Z])|(?<=[A-Z])(?=[A-Z][a-z])")
 
-# The two string shapes the machine answers in that are not words. Run meters
-# arrive as ISO-8601 durations ("PT2591392S") and everything dated as an ISO
-# instant; both are worth reading as what they are.
-_DURATION = re.compile(r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?")
+# Everything dated arrives as an ISO instant, which is worth reading as one.
+# The other shape, an ISO-8601 duration, is parsed in entities.py: an entity
+# wants the number and only this file wants it in hours.
 _INSTANT = re.compile(r"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d")
 
 
 
 def page(raw):
     """The controller's state, shaped for the page."""
+    chosen = next((m for m in raw["machines"] if m["address"] == raw["selected"]), None)
+    reading_now = raw["reading"] or {}
+    results = reading_now.get("results")
     return {
         "version": raw["version"],
         "has_adapter": bool(raw["adapter"]),
-        "stage": stage(raw),
+        "stage": stage(raw, chosen),
         "busy": raw["busy"],
         "scanning": raw["scanning"],
-        "machines": [machine(d) for d in raw["devices"]],
-        "machine": machine(raw["selected_device"]) if raw["selected_device"] else None,
+        "machines": raw["machines"],
+        "machine": chosen,
+        "found": [found(d) for d in raw["devices"]],
+        "people": raw["people"],
+        "people_problem": raw["people_problem"],
+        "publishing": raw["publishing"],
         "question": question(raw["prompt"]),
         "problem": raw["error"],
-        "reading": reading(raw["results"], raw["results_at"]),
+        "summary": summary(results, reading_now.get("at_iso")),
+        "reading": reading(results, reading_now.get("at")),
         "log": [{"at": l["t"], "level": l["level"], "text": l["msg"]} for l in raw["log"]],
     }
 
 
-def stage(raw):
+def stage(raw, chosen):
     """Which of the five things the page can be showing.
 
     An ordered walk rather than a set of flags: each step is only reachable
@@ -60,16 +69,17 @@ def stage(raw):
     """
     if not raw["adapter"]:
         return "no-adapter"
-    if not raw["selected_device"]:
+    if chosen is None:
         return "choose"
-    if not raw["bonded"]:
+    if not chosen["paired"] and not chosen["bonded"]:
         return "pairing"
-    if not raw["has_key"]:
+    if not chosen["paired"]:
         return "pin"
     return "ready"
 
 
-def machine(device):
+def found(device):
+    """A device BlueZ can see, which may or may not be a machine of ours."""
     return {
         "address": device["address"],
         "name": device["name"],
@@ -79,6 +89,48 @@ def machine(device):
         "bonded": device["paired"],
         "candidate": device["candidate"],
     }
+
+
+# The handful of things worth reading before anything else, in the order a
+# person would want them. Everything else stays in the reading below.
+SUMMARY = (("last_used", "Last used"), ("therapy_hours", "Therapy hours"),
+           ("status", "Status"), ("mode", "Mode"))
+
+
+def summary(results, at_iso):
+    """The few facts a reading is actually about.
+
+    Built from the same document the Home Assistant entities are, so the page
+    and the sensors cannot drift into saying different things about the same
+    night.
+    """
+    if not results:
+        return []
+    state = entities.state(results, at_iso)
+    rows = [{"label": label, "value": _readable(key, state[key])}
+            for key, label in SUMMARY if key in state]
+    pressure = _pressure(state)
+    if pressure:
+        rows.append({"label": "Pressure", "value": pressure})
+    return rows
+
+
+def _readable(key, value):
+    if key.endswith("_hours"):
+        hours = int(value)
+        return f"{hours} h {int(round((value - hours) * 60)):02d} min"
+    if key in ("last_used", "last_read"):
+        return instant(value) or str(value)
+    return str(value)
+
+
+def _pressure(state):
+    low, high, set_to = state.get("pressure_min"), state.get("pressure_max"), state.get("pressure_set")
+    if low is not None and high is not None:
+        return f"{scalar(low)}-{scalar(high)} cmH2O"
+    if set_to is not None:
+        return f"{scalar(set_to)} cmH2O"
+    return None
 
 
 def question(prompt):
@@ -201,25 +253,9 @@ def scalar(value):
     return str(value)
 
 
-def seconds(value):
-    """An ISO-8601 duration as a number, or None if it is not one.
-
-    The run meters arrive as "PT2591392S". This is the same parse the page's
-    label uses, kept separate because an entity wants the number and a person
-    wants the hours.
-    """
-    if not isinstance(value, str):
-        return None
-    match = _DURATION.fullmatch(value)
-    if not match or not any(match.groups()):
-        return None
-    days, hours, minutes, secs = (float(g or 0) for g in match.groups())
-    return int(days * 86400 + hours * 3600 + minutes * 60 + secs)
-
-
 def duration(value):
     """"PT2591392S" is a run meter. Hours are how a CPAP quotes one."""
-    total = seconds(value)
+    total = entities.seconds(value)
     if total is None:
         return None
     if total < 3600:

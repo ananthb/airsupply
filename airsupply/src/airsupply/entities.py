@@ -12,7 +12,22 @@ sending one should cost that entity, not the reading.
 
 import re
 
-from . import api
+# Run meters arrive as ISO-8601 durations ("PT2591392S"). The parse lives here
+# rather than with the page's formatting because an entity wants the number;
+# turning it into hours for a person is api.py's business.
+_DURATION = re.compile(r"P(?:(\d+)D)?T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?")
+
+
+def seconds(value):
+    """An ISO-8601 duration as a number of seconds, or None if it is not one."""
+    if not isinstance(value, str):
+        return None
+    match = _DURATION.fullmatch(value)
+    if not match or not any(match.groups()):
+        return None
+    days, hours, minutes, secs = (float(g or 0) for g in match.groups())
+    return int(days * 86400 + hours * 3600 + minutes * 60 + secs)
+
 
 MANUFACTURER = "ResMed"
 MODEL = "AirMini"
@@ -300,7 +315,7 @@ def _convert(raw, kind):
     if raw is None:
         return None
     if kind == "hours":
-        total = api.seconds(raw)
+        total = seconds(raw)
         return None if total is None else round(total / 3600, 2)
     if kind == "timestamp":
         # Home Assistant wants ISO-8601 with an offset for a timestamp; the

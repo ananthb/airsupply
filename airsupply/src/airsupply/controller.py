@@ -11,14 +11,16 @@ airmini/session.py for where that line is drawn.
 
 import asyncio
 import collections
+import datetime
 import json
 import logging
+import os
 import re
 import time
 
 from dbus_next import DBusError
 
-from . import store
+from . import hass, mqtt, store
 from .bluez import adapter, agent, spp
 
 log = logging.getLogger("airsupply")
@@ -33,7 +35,14 @@ LOG_LINES = 300
 # a controller that is not inquiring itself. Miss any of the three and BlueZ
 # answers ConnectionAttemptFailed: Page Timeout -- which says nothing about
 # which one it was, so the sequence covers all three before it gives up.
+# How often every paired machine is read. The AirMini is a nightstand device
+# whose numbers move once a night, so this is about keeping Home Assistant
+# current rather than about resolution -- and every read is a window in which
+# ResMed's own app cannot have the machine.
+READ_EVERY = int(os.environ.get("AIRSUPPLY_READ_EVERY") or 900)
+
 REFRESH_SCAN_SECONDS = 8
+
 RADIO_SETTLE = 2.0
 PAIR_ATTEMPTS = 3
 PAIR_RETRY_PAUSE = 4.0
@@ -96,9 +105,15 @@ class Controller:
         self.scanning = False
         self.busy = None
         self.error = None
-        self.results = {}
-        self.results_at = None
+        # One reading per machine, keyed by address. A reading belongs to the
+        # machine it came from rather than to the add-on, which is what makes
+        # a second machine possible at all.
+        self.readings = {}
         self.session_state = None
+
+        self.publisher = mqtt.Publisher(version)
+        self.people = []
+        self.people_problem = None
         self.log = collections.deque(maxlen=LOG_LINES)
         self.agent = None
         self.agent_ok = False
@@ -108,6 +123,7 @@ class Controller:
         self._task = None
         self._scan_task = None
         self._scan_stop = None
+        self._schedule_task = None
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -127,9 +143,46 @@ class Controller:
         self.profile = await spp.register(self.bus)
         await self.refresh(force=True)
 
-        if self.selected and store.master_pair_key(self.selected):
-            log.info("A pairing key is stored for %s; reading on start.", self.selected)
-            self._spawn("read", self._read)
+        self.publisher.start()
+        await self.refresh_people()
+        self._schedule_task = asyncio.create_task(self._schedule())
+
+    async def refresh_people(self):
+        """Who Home Assistant knows about, so a machine can belong to one."""
+        if not hass.configured():
+            self.people_problem = "the add-on has not been granted homeassistant_api"
+            return
+        try:
+            self.people = await hass.people()
+            self.people_problem = None
+            log.info("Home Assistant knows %d people.", len(self.people))
+        except hass.Unavailable as err:
+            self.people_problem = str(err)
+            log.warning("Could not ask Home Assistant who lives here: %s", err)
+
+    def _paired(self):
+        """Machines there is a key for, so they can be read without anybody."""
+        return [a for a, m in store.machines().items() if m["paired"]]
+
+    async def _schedule(self):
+        """Read every paired machine, in turn, for as long as we are running.
+
+        In turn, because the machine accepts one connection at a time and
+        while we hold it ResMed's own app cannot. A machine with no key yet
+        is left alone rather than woken up to ask it for one.
+
+        The first pass is immediate: after a restart the numbers in Home
+        Assistant are as old as the add-on was down for.
+        """
+        while True:
+            for address in self._paired():
+                if self.busy:
+                    continue
+                try:
+                    await self._spawn("read", lambda a=address: self._read(a))
+                except Busy:
+                    break
+            await asyncio.sleep(READ_EVERY)
 
     # --- state -------------------------------------------------------------
 
@@ -163,12 +216,48 @@ class Controller:
             "bonded": bool(sel and sel["paired"]),
             "has_key": bool(self.selected and store.master_pair_key(self.selected)),
             "prompt": self._prompt.to_json() if self._prompt else None,
-            "results": self.results,
-            "results_at": self.results_at,
+            "machines": self.machines(),
+            "people": [person.to_json() for person in self.people],
+            "people_problem": self.people_problem,
+            "reading": self.readings.get(self.selected),
+            "publishing": {
+                "configured": mqtt.configured(),
+                "connected": self.publisher.connected,
+                "problem": self.publisher.problem,
+            },
             "session_state": self.session_state,
             "error": self.error,
             "log": list(self.log),
         }
+
+    def machines(self):
+        """Every machine we have been told about, with whatever is known.
+
+        The store says which machines exist and whose they are; BlueZ says
+        whether one is in range and bonded right now. Neither is the whole
+        picture on its own -- a machine that is paired and out of range is
+        still a machine somebody owns.
+        """
+        people = {person.id: person for person in self.people}
+        out = []
+        for address, record in store.machines().items():
+            device = next((d for d in self.devices if d["address"] == address), None) or {}
+            reading = self.readings.get(address)
+            person = people.get(record["person_id"])
+            out.append({
+                "address": address,
+                "name": device.get("name") or record["name"] or "",
+                "signal": device.get("rssi"),
+                "classic": bool(device.get("classic", True)),
+                "serial": bool(device.get("spp")),
+                "bonded": bool(device.get("paired")),
+                "paired": record["paired"],
+                "person": person.to_json() if person else None,
+                "person_id": record["person_id"],
+                "missing_person": bool(record["person_id"] and not person),
+                "last_read": reading["at"] if reading else None,
+            })
+        return out
 
     def _on_prompt(self, prompt):
         self._prompt = prompt
@@ -193,6 +282,7 @@ class Controller:
                 self._last_refresh = 0.0
 
         self._task = asyncio.create_task(runner())
+        return self._task
 
     def scan(self, seconds=SCAN_SECONDS):
         if self.scanning:
@@ -239,12 +329,44 @@ class Controller:
         await self._scan_finished()
 
     def select(self, address):
+        """Add a machine, or move the page's attention to one already added.
+
+        A machine BlueZ cannot see is still selectable once it is in the
+        store: it is out of range, not gone, and its readings are still
+        worth looking at.
+        """
         address = (address or "").upper()
-        if not any(d["address"] == address for d in self.devices):
-            raise ValueError(f"{address} is not a device BlueZ knows about")
-        self.selected = address
+        device = next((d for d in self.devices if d["address"] == address), None)
+        if device is None and address not in store.machines():
+            raise ValueError(f"{address} is not a machine BlueZ knows about")
+        store.add(address, (device or {}).get("name", ""))
         store.select(address)
-        log.info("Selected %s.", address)
+        self.selected = address
+        log.info("Looking at %s.", address)
+
+    def assign(self, address, person_id):
+        """Say which of Home Assistant's people a machine belongs to."""
+        address = (address or self.selected or "").upper()
+        if not address:
+            raise RuntimeError("no machine chosen")
+        person_id = person_id or None
+        if person_id and not any(person.id == person_id for person in self.people):
+            raise ValueError("Home Assistant does not know that person")
+        store.assign(address, person_id)
+        self._republish(address)
+
+    def _publish(self, address):
+        record = store.machines().get(address) or {}
+        person = next((p for p in self.people if p.id == record.get("person_id")), None)
+        reading = self.readings.get(address) or {}
+        self.publisher.publish(address, record.get("name") or "", person,
+                               reading.get("results"), reading.get("at_iso"))
+
+    def _republish(self, address):
+
+        """Say a machine again, after something about it has changed."""
+        if address in self.readings:
+            self._publish(address)
 
     def bond(self):
         self._spawn("bond", self._bond)
@@ -341,10 +463,10 @@ class Controller:
         self._spawn("pair", lambda: self._with_session(lambda s: self._pair(s, pin)))
 
     def read(self):
-        self._spawn("read", self._read)
+        self._spawn("read", lambda: self._read(self.selected))
 
-    async def _read(self):
-        await self._with_session(self._reconnect)
+    async def _read(self, address):
+        await self._with_session(lambda s: self._reconnect(s, address), address)
 
     def forget(self):
         self._spawn("forget", self._forget)
@@ -358,19 +480,20 @@ class Controller:
             except Exception as err:  # noqa: BLE001
                 log.warning("Could not remove the device from BlueZ: %s", err)
         if self.selected:
-            store.forget(self.selected)
-            log.info("Forgot %s and its pairing key.", self.selected)
-        self.selected = None
-        self.results = {}
-        self.results_at = None
+            gone = self.selected
+            self.publisher.forget(gone)
+            store.forget(gone)
+            self.readings.pop(gone, None)
+        self.selected = store.selected()
         self.session_state = None
 
     # --- the serial session ------------------------------------------------
 
-    async def _with_session(self, work):
-        dev = self._selected_device()
+    async def _with_session(self, work, address=None):
+        address = (address or self.selected or "").upper()
+        dev = next((d for d in self.devices if d["address"] == address), None)
         if dev is None:
-            raise RuntimeError("no machine selected")
+            raise RuntimeError(f"BlueZ cannot see {address or 'any machine'} right now")
         if not dev["paired"]:
             raise RuntimeError("the Bluetooth bond is missing; do that step first")
 
@@ -405,18 +528,18 @@ class Controller:
         else:
             log.warning("No pairing key in the result; the PIN will be needed again.")
             log.warning("The result was %s.", type(result).__name__)
-        await self._reads(session)
+        await self._reads(session, self.selected)
 
-    async def _reconnect(self, session):
-        key = store.master_pair_key(self.selected)
+    async def _reconnect(self, session, address):
+        key = store.master_pair_key(address)
         if not key:
             raise RuntimeError("no pairing key stored; pair with the PIN first")
-        log.info("Reconnecting with the stored pairing key (no PIN needed).")
+        log.info("Reconnecting to %s with its stored key (no PIN needed).", address)
         await asyncio.wait_for(session.open_session(key), HANDSHAKE_TIMEOUT)
         log.info("Session open. State: %s", session.state)
-        await self._reads(session)
+        await self._reads(session, address)
 
-    async def _reads(self, session):
+    async def _reads(self, session, address):
         """Everything the machine will say, in one connection.
 
         Each read is reported on its own rather than aborting on the first
@@ -443,8 +566,14 @@ class Controller:
                 results[title] = {"ok": False, "error": str(err)}
                 log.error("%s failed: %s", title, err)
                 failures += 1
-        self.results = results
-        self.results_at = time.strftime("%Y-%m-%d %H:%M:%S")
+        self.readings[address] = {
+            "results": results,
+            "at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            # What Home Assistant is told, which wants an offset rather than
+            # a local time with nothing to anchor it.
+            "at_iso": _now_iso(),
+        }
+        self._publish(address)
         if failures:
             log.warning("%d of 4 reads failed.", failures)
         else:
@@ -490,7 +619,12 @@ def _checked(candidate):
     return key
 
 
+def _now_iso():
+    return datetime.datetime.now(datetime.timezone.utc).astimezone().isoformat(timespec="seconds")
+
+
 def _dump(title, value):
+
     """Log a result in full, at debug level.
 
     The page lays readings out now, so this is no longer how anyone reads

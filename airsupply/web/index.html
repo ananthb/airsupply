@@ -103,6 +103,23 @@
     font-variant-numeric: tabular-nums;
   }
 
+  /* The few things a reading is about, before everything it contains. */
+  .figures { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 2px 20px; }
+  .figure { padding: 6px 0; }
+  .figure-label { color: var(--muted); font-size: 12.5px; }
+  .figure-value { font-size: 21px; font-weight: 600; letter-spacing: -.01em;
+                  font-variant-numeric: tabular-nums; margin-top: 1px; }
+
+  select.person {
+    font: inherit; font-size: 13.5px; padding: 4px 6px; border-radius: 6px; max-width: 11em;
+    border: 1px solid var(--rule); background: var(--bg); color: var(--ink);
+  }
+  select.person:disabled { opacity: .5; }
+  button.danger { color: var(--bad); }
+  details.card.wide > summary { margin: -3px 0; }
+  details.card.wide[open] > summary { margin-bottom: 8px; }
+  tr.sel { outline: 2px solid var(--accent); outline-offset: -2px; }
+
   .note { color: var(--muted); font-size: 13.5px; margin: 0 0 12px; }
   .banner {
     background: var(--bad-bg); color: var(--bad); border: 1px solid var(--bad);
