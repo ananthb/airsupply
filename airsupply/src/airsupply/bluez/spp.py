@@ -28,31 +28,52 @@ log = logging.getLogger(__name__)
 
 
 class SerialProfile(ServiceInterface):
-    """BlueZ calls into this once a serial connection exists."""
+    """Where a connected serial channel arrives.
+
+    One slot per machine rather than one for the profile. With a connection
+    held open to each machine, two of them can be connecting at the same
+    moment, and a single slot would hand the second machine's channel to
+    whoever asked first.
+    """
 
     def __init__(self):
         super().__init__(c.PROFILE)
-        self.connected = None
-        self.reset()
+        self._waiting = {}
+        self._hangup = {}
 
-    def reset(self):
-        """Arm for the next connection. One future per ConnectProfile."""
-        self.connected = asyncio.get_running_loop().create_future()
+    def expect(self, device_path):
+        """Arm for a connection from one machine, and return its future."""
+        pending = self._waiting.get(device_path)
+        if pending is not None and not pending.done():
+            pending.cancel()
+        future = asyncio.get_running_loop().create_future()
+        self._waiting[device_path] = future
+        return future
+
+    def on_hangup(self, device_path, callback):
+        self._hangup[device_path] = callback
+
+    def forget(self, device_path):
+        self._waiting.pop(device_path, None)
+        self._hangup.pop(device_path, None)
 
     @method()
     def NewConnection(self, device: "o", fd: "h", fd_properties: "a{sv}"):  # noqa: N802
         props = {k: v.value for k, v in fd_properties.items()}
-        log.info("NewConnection from %s", device)
-        log.info("  fd %s, properties %s", fd, props)
-        if not self.connected.done():
-            self.connected.set_result((device, fd, props))
+        future = self._waiting.pop(device, None)
+        if future is not None and not future.done():
+            log.debug("Channel open for %s on fd %s, %s", device, fd, props)
+            future.set_result((device, fd, props))
         else:
             # Nobody is waiting; do not leak the descriptor.
             close(fd)
 
     @method()
     def RequestDisconnection(self, device: "o"):  # noqa: N802
-        log.info("RequestDisconnection from %s", device)
+        log.info("The machine asked to disconnect.")
+        callback = self._hangup.get(device)
+        if callback is not None:
+            callback()
 
     @method()
     def Release(self):  # noqa: N802
@@ -130,8 +151,8 @@ async def connect(bus, device_path, profile, timeout=30.0):
             "Not paired."
         )
 
-    profile.reset()
-    log.info("Connecting serial profile...")
+    arrived = profile.expect(device_path)
+    log.debug("Opening the serial channel to %s", device_path)
     try:
         await device.call_connect_profile(c.SPP_UUID)
     except Exception as err:  # noqa: BLE001 -- BlueZ errors are opaque strings
@@ -139,13 +160,12 @@ async def connect(bus, device_path, profile, timeout=30.0):
         raise NotReachable(explain(err)) from err
 
     try:
-        _, fd, _ = await asyncio.wait_for(profile.connected, timeout)
+        _, fd, _ = await asyncio.wait_for(arrived, timeout)
     except asyncio.TimeoutError as err:
         raise NotReachable(
             "Connected, but the channel never opened."
         ) from err
 
-    log.info("Serial channel open on fd %s.", fd)
     return fd
 
 

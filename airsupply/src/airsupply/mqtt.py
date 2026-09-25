@@ -110,11 +110,11 @@ class Publisher:
 
     # --- what the rest of the add-on calls ---------------------------------
 
-    def publish(self, address, machine_name, person, results, read_at):
+    def publish(self, address, machine_name, person, results, read_at, connected=None):
         """One machine's reading, and its description if that has changed."""
         if not configured():
             return
-        state = entities.state(results, read_at)
+        state = entities.state(results, read_at, connected)
         firmware = entities.firmware_of(results)
         person_name = person.name if person else None
         shape = (machine_name, person_name, firmware, tuple(sorted(state)))

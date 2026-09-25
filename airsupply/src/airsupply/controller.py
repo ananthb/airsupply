@@ -67,7 +67,27 @@ PAGE_TIMEOUT_ADVICE = "No answer. Put the machine in pairing mode and try again.
 _PAIR_KEY = re.compile(r"[0-9a-fA-F]{32,128}")
 _PAIR_KEY_FIELD = re.compile(r'"masterPairKey"\s*:\s*"([0-9a-fA-F]{32,128})"')
 
+class Held:
+    """A machine we are connected to, and staying connected to."""
+
+    def __init__(self, address, path, fd, session):
+        self.address = address
+        self.path = path
+        self.fd = fd
+        self.session = session
+        self.since = time.time()
+
+        # One request at a time down one channel. Two reads of the same
+        # machine at once would interleave on the wire.
+        self.lock = asyncio.Lock()
+
+    @property
+    def alive(self):
+        return self.session.alive
+
+
 class Busy(Exception):
+
     pass
 
 
@@ -104,6 +124,13 @@ class Controller:
         # a second machine possible at all.
         self.readings = {}
         self.session_state = None
+
+        # Machines we are connected to, and machines somebody has let go of
+        # on purpose. A deliberate disconnect stays disconnected: the point of
+        # it is to give the machine to the phone app, and a schedule that took
+        # it straight back would make the button a lie.
+        self.sessions = {}
+        self.released = set()
 
         self.publisher = mqtt.Publisher(version)
         self.people = []
@@ -171,7 +198,7 @@ class Controller:
         """
         while True:
             for address in self._paired():
-                if self.busy:
+                if self.busy or address in self.released:
                     continue
                 try:
                     await self._spawn("read", lambda a=address: self._read(a))
@@ -247,6 +274,8 @@ class Controller:
                 "serial": bool(device.get("spp")),
                 "bonded": bool(device.get("paired")),
                 "paired": record["paired"],
+                "connected": address in self.sessions,
+                "released": address in self.released,
                 "person": person.to_json() if person else None,
                 "person_id": record["person_id"],
                 "missing_person": bool(record["person_id"] and not person),
@@ -355,7 +384,8 @@ class Controller:
         person = next((p for p in self.people if p.id == record.get("person_id")), None)
         reading = self.readings.get(address) or {}
         self.publisher.publish(address, record.get("name") or "", person,
-                               reading.get("results"), reading.get("at_iso"))
+                               reading.get("results"), reading.get("at_iso"),
+                               address in self.sessions)
 
     def _republish(self, address):
 
@@ -448,14 +478,38 @@ class Controller:
     def pair(self, pin):
         pin = (pin or "").strip()
         if not pin:
-            raise ValueError("the PIN on the machine's screen is needed")
-        self._spawn("pair", lambda: self._with_session(lambda s: self._pair(s, pin)))
+            raise ValueError("The PIN on the machine's screen is needed.")
+        self._spawn("pair", lambda: self._first_pair(pin))
+
+    async def _first_pair(self, pin):
+        address = self.selected
+        held = await self._held(address, pin=pin)
+        async with held.lock:
+            await self._reads(held.session, address)
 
     def read(self):
         self._spawn("read", lambda: self._read(self.selected))
 
+    def connect(self):
+        self._spawn("connect", lambda: self._read(self.selected))
+
+    def disconnect(self, address=None):
+        address = (address or self.selected or "").upper()
+        if not address:
+            raise RuntimeError("No machine chosen.")
+        self.released.add(address)
+        self._spawn("disconnect", lambda: self._release(address))
+
     async def _read(self, address):
-        await self._with_session(lambda s: self._reconnect(s, address), address)
+        if not address:
+            raise RuntimeError("No machine selected.")
+        held = await self._held(address)
+        try:
+            async with held.lock:
+                await self._reads(held.session, address)
+        except Exception:
+            await self._release(address)
+            raise
 
     def forget(self):
         self._spawn("forget", self._forget)
@@ -470,62 +524,102 @@ class Controller:
                 log.warning("Could not unpair the machine: %s", err)
         if self.selected:
             gone = self.selected
+            await self._release(gone)
+            self.released.discard(gone)
             self.publisher.forget(gone)
             store.forget(gone)
             self.readings.pop(gone, None)
         self.selected = store.selected()
         self.session_state = None
 
-    # --- the serial session ------------------------------------------------
+    # --- connections we keep -----------------------------------------------
 
-    async def _with_session(self, work, address=None):
-        address = (address or self.selected or "").upper()
+    async def _held(self, address, pin=None):
+        """The open connection to a machine, opening one if there is not one.
+
+        Connections are kept rather than made for each reading. The machine
+        only accepts one for a while after it is powered on, so letting go
+        can mean needing the button on it to get back in -- which is not
+        something to ask of anybody at 3am. Holding it costs the ResMed app
+        the machine, which is what Disconnect is for.
+        """
+        held = self.sessions.get(address)
+        if pin is None and held is not None and held.alive:
+            return held
+        if held is not None:
+            await self._release(address)
+        return await self._connect(address, pin)
+
+    async def _connect(self, address, pin=None):
         dev = next((d for d in self.devices if d["address"] == address), None)
         if dev is None:
             raise RuntimeError("Machine not in range.")
         if not dev["paired"]:
-            raise RuntimeError("the Bluetooth bond is missing; do that step first")
+            raise RuntimeError("Not paired. Pair first.")
 
-        # spp.connect raises NotReachable with something worth reading; the
-        # page shows whatever comes out of here, so nothing is swallowed.
         fd = await spp.connect(self.bus, dev["path"], self.profile)
 
         # Imported here so the page still comes up on an image where
         # libairmini failed to build -- the survey is useful on its own.
         from .airmini import Session
 
-        session = Session(fd)
+        session = Session(fd, on_lost=lambda err, a=address: self._lost(a, err))
         try:
             session.open()
-            await work(session)
-        finally:
-            self.session_state = session.state
+            await self._handshake(session, address, pin)
+        except BaseException:
             session.close()
             spp.close(fd)
-            try:
-                await adapter.disconnect_profile(self.bus, dev["path"])
-            except Exception:  # noqa: BLE001 -- the machine may have hung up
-                pass
+            raise
 
-    async def _pair(self, session, pin):
-        log.info("Pairing with the machine via SRP-6a.")
-        result = await asyncio.wait_for(session.pair(pin), HANDSHAKE_TIMEOUT)
-        log.info("Paired. State: %s", session.state)
-        key = master_pair_key(result)
-        if key:
-            store.remember_master_pair_key(self.selected, key)
-        else:
-            log.warning("No pairing key in the result (%s).", type(result).__name__)
-        await self._reads(session, self.selected)
+        held = Held(address, dev["path"], fd, session)
+        self.sessions[address] = held
+        self.profile.on_hangup(dev["path"], lambda a=address: self._lost(a, None))
+        self.released.discard(address)
+        log.info("Connected to %s.", address)
+        return held
 
-    async def _reconnect(self, session, address):
+    async def _handshake(self, session, address, pin):
+        if pin is not None:
+            log.info("Pairing with the machine.")
+            result = await asyncio.wait_for(session.pair(pin), HANDSHAKE_TIMEOUT)
+            key = master_pair_key(result)
+            if key:
+                store.remember_master_pair_key(address, key)
+            else:
+                log.warning("No pairing key in the result (%s).", type(result).__name__)
+            return
+
         key = store.master_pair_key(address)
         if not key:
             raise RuntimeError("No pairing key. Enter the PIN first.")
-        log.info("Reconnecting to %s.", address)
         await asyncio.wait_for(session.open_session(key), HANDSHAKE_TIMEOUT)
-        log.info("Session open. State: %s", session.state)
-        await self._reads(session, address)
+
+    def _lost(self, address, err):
+        """The machine went away on its own. Tidy up in the background."""
+        held = self.sessions.pop(address, None)
+        if held is None:
+            return
+        log.info("Disconnected from %s.", address)
+        asyncio.create_task(self._tidy(held))
+
+    async def _release(self, address):
+        """Let go of a machine deliberately."""
+        held = self.sessions.pop(address, None)
+        if held is None:
+            return
+        await self._tidy(held)
+        log.info("Released %s.", address)
+
+    async def _tidy(self, held):
+        self.session_state = held.session.state
+        held.session.close()
+        spp.close(held.fd)
+        self.profile.forget(held.path)
+        try:
+            await adapter.disconnect_profile(self.bus, held.path)
+        except Exception:  # noqa: BLE001 -- the machine may have hung up first
+            pass
 
     async def _reads(self, session, address):
         """Everything the machine will say, in one connection.

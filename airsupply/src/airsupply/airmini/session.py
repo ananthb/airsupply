@@ -42,12 +42,18 @@ READ_METHODS = frozenset({
 
 
 class Session:
-    def __init__(self, fd, notify=None):
+    def __init__(self, fd, notify=None, on_lost=None):
         self._fd = fd
         self._am = None
         self._loop = None
         self._closed = False
         self._notify_hook = notify
+
+        # Called once if the channel goes away on its own. A session that is
+        # held open for hours has to be able to say it is gone; one that was
+        # opened for a single read could be let fail at the next request.
+        self._on_lost = on_lost
+        self.lost = None
 
         # Response futures, keyed by the token handed to C as the `user`
         # pointer. Tokens start at 1: ctypes turns a zero c_void_p back into
@@ -140,13 +146,11 @@ class Session:
         except BlockingIOError:
             return
         except OSError as err:
-            log.error("Read from the serial channel failed: %s", err)
-            self._fail_pending(err)
+            self._lose(err)
             return
 
         if not chunk:
-            log.warning("The machine closed the serial channel.")
-            self._fail_pending(ConnectionResetError("device hung up"))
+            self._lose(ConnectionResetError("the machine closed the connection"))
             return
 
         log.debug("<- %d bytes", len(chunk))
@@ -155,6 +159,26 @@ class Session:
         status = _lib.lib().airmini_feed(self._am, buf, len(chunk))
         if status != _lib.OK:
             log.warning("airmini_feed: %s", _lib.strerror(status))
+
+    def _lose(self, err):
+        """The channel has gone. Stop watching it, and say so once.
+
+        Stopping watching is the part that matters: at end of file the
+        descriptor stays readable for ever, so a reader left registered spins
+        the event loop at full tilt rather than idling. Closing for each read
+        hid that; holding the connection open does not.
+        """
+        if self._closed:
+            return
+        self.lost = err
+        log.info("Lost the connection: %s", err)
+        self.close()
+        if self._on_lost is not None:
+            self._on_lost(err)
+
+    @property
+    def alive(self):
+        return not self._closed
 
     # --- callbacks from C --------------------------------------------------
 

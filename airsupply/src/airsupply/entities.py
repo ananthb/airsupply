@@ -163,6 +163,12 @@ BINARY_SENSORS = (
         "device_class": "running",
         "icon": "mdi:account-clock",
     },
+    {
+        "key": "connected",
+        "name": "Connected",
+        "device_class": "connectivity",
+        "entity_category": "diagnostic",
+    },
 )
 
 COPIED = "|".join(s["key"] for s in SENSORS)
@@ -247,7 +253,7 @@ def discovery(address, machine_name, person_name, firmware, version, keys):
             "device": info,
             "origin": origin,
         }
-        for extra in ("device_class", "icon"):
+        for extra in ("device_class", "icon", "entity_category"):
             if sensor.get(extra):
                 payload[extra] = sensor[extra]
         out.append((discovery_topic("binary_sensor", address, sensor["key"]), payload))
@@ -278,7 +284,7 @@ def _active_profile(settings):
     return {}
 
 
-def state(results, read_at):
+def state(results, read_at, connected=None):
     """The state document every entity for this machine reads from.
 
     One retained message rather than one topic per entity: the reading is
@@ -308,6 +314,8 @@ def state(results, read_at):
     status = settings.get("FGState")
     if isinstance(status, str):
         out["in_therapy"] = "on" if status.lower() == "therapy" else "off"
+    if connected is not None:
+        out["connected"] = "on" if connected else "off"
     return out
 
 

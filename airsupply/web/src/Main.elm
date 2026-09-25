@@ -51,6 +51,8 @@ type alias Machine =
     , serial : Bool
     , bonded : Bool
     , paired : Bool
+    , connected : Bool
+    , released : Bool
     , person : Maybe Person
     , personId : Maybe String
     , missingPerson : Bool
@@ -400,15 +402,17 @@ personDecoder =
 
 machineDecoder : D.Decoder Machine
 machineDecoder =
-    D.map8 Machine
+    D.map6 Machine
         (D.field "address" D.string)
         (D.field "name" D.string)
         (D.field "signal" (D.nullable D.int))
         (D.field "classic" D.bool)
         (D.field "serial" D.bool)
         (D.field "bonded" D.bool)
-        (D.field "paired" D.bool)
-        (D.field "person" (D.nullable personDecoder))
+        |> andMap (D.field "paired" D.bool)
+        |> andMap (D.field "connected" D.bool)
+        |> andMap (D.field "released" D.bool)
+        |> andMap (D.field "person" (D.nullable personDecoder))
         |> andMap (D.field "person_id" (D.nullable D.string))
         |> andMap (D.field "missing_person" D.bool)
         |> andMap (D.field "last_read" (D.nullable D.string))
@@ -605,7 +609,7 @@ menuRow state machine =
 
 machineDot : Machine -> String
 machineDot machine =
-    if machine.paired then
+    if machine.connected then
         "live"
 
     else
@@ -626,7 +630,7 @@ lampClass state =
     if state.busy /= Nothing || state.scanning then
         "work"
 
-    else if state.stage == Ready then
+    else if Maybe.withDefault False (Maybe.map .connected state.machine) then
         "live"
 
     else
@@ -647,6 +651,12 @@ lampText state =
 
         ( Just "forget", _ ) ->
             "Forgetting."
+
+        ( Just "disconnect", _ ) ->
+            "Disconnecting."
+
+        ( Just "connect", _ ) ->
+            "Connecting."
 
         ( Just other, _ ) ->
             other
@@ -674,12 +684,24 @@ idleText state =
             "Needs the machine's PIN."
 
         Ready ->
-            case Maybe.andThen .lastRead state.machine of
-                Just at ->
-                    "Read at " ++ clock at
+            let
+                read =
+                    case Maybe.andThen .lastRead state.machine of
+                        Just at ->
+                            ", read at " ++ clock at
 
-                Nothing ->
-                    "Nothing read yet."
+                        Nothing ->
+                            ", nothing read yet"
+            in
+            case ( Maybe.map .connected state.machine, Maybe.map .released state.machine ) of
+                ( Just True, _ ) ->
+                    "Connected" ++ read
+
+                ( _, Just True ) ->
+                    "Disconnected" ++ read
+
+                _ ->
+                    "Not connected" ++ read
 
 
 {-| "2026-09-26 00:34:09" as "00:34".
@@ -771,7 +793,9 @@ setup model state =
 
         Ready ->
             [ div [ class "row-btns actions" ]
-                [ button [ class "go", onClick (Send "read" []), disabled working ] [ text "Read now" ] ]
+                [ button [ class "go", onClick (Send "read" []), disabled working ] [ text "Read now" ]
+                , link state working
+                ]
             ]
 
 
@@ -794,6 +818,27 @@ adding model state =
             , foundList state
             ]
         ]
+
+
+{-| Connected or not, and the button that changes it.
+
+Holding the connection is what keeps the machine reachable; letting go hands
+it back to the ResMed app, which cannot have it while we do. A release is
+deliberate and stays that way until somebody connects again -- a schedule
+that took the machine straight back would make the button a lie.
+-}
+link : State -> Bool -> Html Msg
+link state working =
+    case state.machine of
+        Nothing ->
+            text ""
+
+        Just machine ->
+            if machine.connected then
+                button [ onClick (Send "disconnect" []), disabled working ] [ text "Disconnect" ]
+
+            else
+                button [ onClick (Send "connect" []), disabled working ] [ text "Connect" ]
 
 
 scanButton : State -> Html Msg
@@ -1056,6 +1101,16 @@ device state machine =
 
                      else
                         "needs its PIN"
+                    )
+                , Field "Connection"
+                    (if machine.connected then
+                        "held open"
+
+                     else if machine.released then
+                        "released"
+
+                     else
+                        "none"
                     )
                 , Field "Last read" (Maybe.withDefault "never" machine.lastRead)
                 ]
