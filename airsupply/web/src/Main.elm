@@ -1,32 +1,29 @@
-port module Main exposing (main)
+module Main exposing (main)
 
 {-| The airsupply page.
 
-Elm owns the state and the view, pure; js/api.js owns the add-on's HTTP API and
-the polling. Intents go out `toAddon`, and the add-on's whole state comes back
-on `fromAddon` -- there is nothing here to merge and so nothing to go stale.
+The whole page: state, view, and the HTTP it takes to keep them current. There
+is no JavaScript, and nothing to keep in step with any.
+
+Every request answers with the add-on's entire state rather than a patch of
+it, so there is nothing here to merge and nothing that can go stale in one
+corner while the rest moves on. Polling takes its pace from that state -- a
+second apart while the machine is doing something, four while it is not --
+which is a decision that belongs where the state is.
 
 The page has one subject, the machine, and one job: say whether airsupply is
-talking to it and show what it last read. Setting it up is a thing that
-happens once, so it only takes up room while it is unfinished.
+talking to it and show what it last read. Setting it up happens once, so it
+takes up room only while it is unfinished.
 -}
 
 import Browser
 import Html exposing (..)
 import Html.Attributes exposing (..)
 import Html.Events exposing (onClick, onInput, onSubmit)
+import Http
 import Json.Decode as D
 import Json.Encode as E
-
-
-
--- PORTS
-
-
-port toAddon : E.Value -> Cmd msg
-
-
-port fromAddon : (D.Value -> msg) -> Sub msg
+import Time
 
 
 
@@ -93,13 +90,18 @@ type alias Model =
     , pin : String
     , reply : String
     , picking : Bool
+
+    -- One request at a time. A tick that lands while the last one is still
+    -- out is dropped rather than queued: the answer is the whole state, so
+    -- the one already on its way says everything the second would have.
+    , waiting : Bool
     }
 
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { state = Nothing, unreachable = Nothing, pin = "", reply = "", picking = False }
-    , Cmd.none
+    ( { state = Nothing, unreachable = Nothing, pin = "", reply = "", picking = False, waiting = True }
+    , fetch
     )
 
 
@@ -108,7 +110,8 @@ init _ =
 
 
 type Msg
-    = Incoming D.Value
+    = Tick Time.Posix
+    | Answered (Result Http.Error State)
     | Send String (List ( String, E.Value ))
     | PinTyped String
     | ReplyTyped String
@@ -120,11 +123,18 @@ type Msg
 update : Msg -> Model -> ( Model, Cmd Msg )
 update msg model =
     case msg of
-        Incoming raw ->
-            ( absorb raw model, Cmd.none )
+        Tick _ ->
+            if model.waiting then
+                ( model, Cmd.none )
+
+            else
+                ( { model | waiting = True }, fetch )
+
+        Answered result ->
+            ( absorb result model, Cmd.none )
 
         Send kind extras ->
-            ( model, toAddon (E.object (( "kind", E.string kind ) :: extras)) )
+            ( { model | waiting = True }, act kind extras )
 
         PinTyped value ->
             ( { model | pin = digits 8 value }, Cmd.none )
@@ -133,10 +143,12 @@ update msg model =
             ( { model | reply = digits 8 value }, Cmd.none )
 
         SendPin ->
-            ( model, toAddon (E.object [ ( "kind", E.string "pair" ), ( "pin", E.string model.pin ) ]) )
+            ( { model | waiting = True }, act "pair" [ ( "pin", E.string model.pin ) ] )
 
         SendReply ->
-            ( model, toAddon (E.object [ ( "kind", E.string "answer" ), ( "value", E.string model.reply ), ( "accept", E.bool True ) ]) )
+            ( { model | waiting = True }
+            , act "answer" [ ( "value", E.string model.reply ), ( "accept", E.bool True ) ]
+            )
 
         TogglePicking ->
             ( { model | picking = not model.picking }, Cmd.none )
@@ -151,16 +163,17 @@ digits limit value =
     value |> String.filter Char.isDigit |> String.left limit
 
 
-absorb : D.Value -> Model -> Model
-absorb raw model =
-    case D.decodeValue eventDecoder raw of
-        Ok (Unreachable why) ->
-            { model | unreachable = Just why }
+absorb : Result Http.Error State -> Model -> Model
+absorb result model =
+    case result of
+        Err err ->
+            { model | waiting = False, unreachable = Just (wrong err) }
 
-        Ok (Fresh state) ->
+        Ok state ->
             { model
                 | state = Just state
                 , unreachable = Nothing
+                , waiting = False
 
                 -- Clear a field once what it was for is over, so a code does
                 -- not sit on screen after it has been accepted.
@@ -184,31 +197,82 @@ absorb raw model =
                         model.picking
             }
 
-        Err err ->
-            { model | unreachable = Just (D.errorToString err) }
+
+wrong : Http.Error -> String
+wrong err =
+    case err of
+        Http.BadUrl url ->
+            url ++ " is not a URL."
+
+        Http.Timeout ->
+            "It did not answer in time."
+
+        Http.NetworkError ->
+            "Nothing answered; it may have stopped."
+
+        Http.BadStatus code ->
+            "It answered " ++ String.fromInt code ++ "."
+
+        Http.BadBody why ->
+            "It answered something this page cannot read. " ++ why
+
+
+
+-- THE ADD-ON
+
+
+fetch : Cmd Msg
+fetch =
+    Http.get { url = "api/state", expect = expectState }
+
+
+act : String -> List ( String, E.Value ) -> Cmd Msg
+act kind extras =
+    Http.post
+        { url = "api/" ++ kind
+        , body = Http.jsonBody (E.object extras)
+        , expect = expectState
+        }
+
+
+{-| Decode the body whatever the status line says.
+
+A refused action answers 4xx and puts the reason in the state it sends back,
+which is the thing the page most needs at that moment --
+`Http.expectJson` would discard it along with the rest of the body and leave
+only the number. So the status is kept for the one case where it is all there
+is: a body that is not state at all.
+-}
+expectState : Http.Expect Msg
+expectState =
+    Http.expectStringResponse Answered <|
+        \response ->
+            case response of
+                Http.BadUrl_ url ->
+                    Err (Http.BadUrl url)
+
+                Http.Timeout_ ->
+                    Err Http.Timeout
+
+                Http.NetworkError_ ->
+                    Err Http.NetworkError
+
+                Http.BadStatus_ metadata body ->
+                    decodeState body
+                        |> Result.mapError (\_ -> Http.BadStatus metadata.statusCode)
+
+                Http.GoodStatus_ _ body ->
+                    decodeState body
+
+
+decodeState : String -> Result Http.Error State
+decodeState body =
+    D.decodeString stateDecoder body
+        |> Result.mapError (D.errorToString >> Http.BadBody)
 
 
 
 -- DECODERS
-
-
-type Event
-    = Fresh State
-    | Unreachable String
-
-
-eventDecoder : D.Decoder Event
-eventDecoder =
-    D.field "kind" D.string
-        |> D.andThen
-            (\kind ->
-                case kind of
-                    "state" ->
-                        D.map Fresh (D.field "state" stateDecoder)
-
-                    _ ->
-                        D.map Unreachable (D.field "message" D.string)
-            )
 
 
 stateDecoder : D.Decoder State
@@ -749,11 +813,31 @@ inputmode =
     attribute "inputmode"
 
 
+{-| How often to ask again.
+
+A second apart while the machine is doing something or waiting to be answered,
+four while it is idle. The page already knows which, so the pace is read off
+the state rather than guessed at from outside it.
+-}
+pace : Model -> Float
+pace model =
+    case model.state of
+        Nothing ->
+            1000
+
+        Just state ->
+            if state.busy /= Nothing || state.scanning || state.question /= Nothing then
+                1000
+
+            else
+                4000
+
+
 main : Program () Model Msg
 main =
     Browser.element
         { init = init
         , update = update
         , view = view
-        , subscriptions = \_ -> fromAddon Incoming
+        , subscriptions = \model -> Time.every (pace model) Tick
         }

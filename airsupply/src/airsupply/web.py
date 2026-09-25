@@ -75,9 +75,9 @@ def make_app(controller):
         web.get("/", index),
         web.get("/api/state", state),
         web.post("/api/{action}", act),
-        # The compiled Elm and the bundle that wires it to the API. Immutable
-        # for the life of an image, but the add-on is reinstalled rather than
-        # long-lived, so there is nothing to gain from caching them.
+        # The compiled Elm, which is the whole page. Immutable for the life of
+        # an image, but an add-on is reinstalled rather than long-lived, so
+        # there is nothing to gain from caching it.
         web.static("/assets", ASSETS),
     ])
     return app

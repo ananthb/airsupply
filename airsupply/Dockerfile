@@ -68,7 +68,6 @@ RUN npm ci --no-audit --no-fund
 COPY web/elm.json ./
 COPY web/index.html ./
 COPY web/src/ ./src/
-COPY web/js/ ./js/
 RUN npm run build
 
 # ---------------------------------------------------------------------------
@@ -109,7 +108,6 @@ RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.api, airsupply.web' \
     && test -s /usr/src/airsupply/static/index.html \
     && test -s /usr/src/airsupply/static/assets/elm.js \
-    && test -s /usr/src/airsupply/static/assets/app.js \
     && python3 -m unittest discover -s /tmp/tests -q \
     && rm -rf /tmp/tests
 
