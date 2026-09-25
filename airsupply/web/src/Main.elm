@@ -84,9 +84,24 @@ type alias State =
     }
 
 
+{-| What the page knows about the add-on.
+
+Three states rather than the usual four. There is no "not asked": `init`
+fires the first request, so the page is never sitting on a question it has
+not put. And a failure after the first success keeps the state it already
+had, because a poll that times out should not blank a reading somebody is
+reading -- `Live state (Just err)` is where a page like this spends most of
+any bad minute, and it is the state a plain
+`NotAsked | Loading | Failure e | Success a` cannot hold.
+-}
+type Link
+    = Starting
+    | Unreachable Http.Error
+    | Live State (Maybe Http.Error)
+
+
 type alias Model =
-    { state : Maybe State
-    , unreachable : Maybe String
+    { link : Link
     , pin : String
     , reply : String
     , picking : Bool
@@ -100,7 +115,7 @@ type alias Model =
 
 init : () -> ( Model, Cmd Msg )
 init _ =
-    ( { state = Nothing, unreachable = Nothing, pin = "", reply = "", picking = False, waiting = True }
+    ( { link = Starting, pin = "", reply = "", picking = False, waiting = True }
     , fetch
     )
 
@@ -165,14 +180,18 @@ digits limit value =
 
 absorb : Result Http.Error State -> Model -> Model
 absorb result model =
-    case result of
-        Err err ->
-            { model | waiting = False, unreachable = Just (wrong err) }
+    case ( result, model.link ) of
+        ( Err err, Live state _ ) ->
+            -- Something has answered before. Keep it on screen and say only
+            -- that the last try did not come back.
+            { model | waiting = False, link = Live state (Just err) }
 
-        Ok state ->
+        ( Err err, _ ) ->
+            { model | waiting = False, link = Unreachable err }
+
+        ( Ok state, _ ) ->
             { model
-                | state = Just state
-                , unreachable = Nothing
+                | link = Live state Nothing
                 , waiting = False
 
                 -- Clear a field once what it was for is over, so a code does
@@ -373,23 +392,28 @@ lineDecoder =
 view : Model -> Html Msg
 view model =
     main_ []
-        (case ( model.state, model.unreachable ) of
-            ( Nothing, Nothing ) ->
+        (case model.link of
+            Starting ->
                 [ p [ class "muted" ] [ text "Starting." ] ]
 
-            ( Nothing, Just why ) ->
-                [ div [ class "banner" ] [ text ("The add-on is not answering. " ++ why) ] ]
+            Unreachable err ->
+                [ div [ class "banner" ] [ text (notAnswering err) ] ]
 
-            ( Just state, _ ) ->
-                page model state
+            Live state lastTry ->
+                page model state lastTry
         )
 
 
-page : Model -> State -> List (Html Msg)
-page model state =
+notAnswering : Http.Error -> String
+notAnswering err =
+    "The add-on is not answering. " ++ wrong err
+
+
+page : Model -> State -> Maybe Http.Error -> List (Html Msg)
+page model state lastTry =
     List.concat
         [ [ heading state ]
-        , maybeView model.unreachable (\why -> div [ class "banner" ] [ text ("The add-on is not answering. " ++ why) ])
+        , maybeView lastTry (\err -> div [ class "banner" ] [ text (notAnswering err) ])
         , maybeView state.problem (\why -> div [ class "banner" ] [ text why ])
         , maybeView state.question (question model state)
         , setup model state
@@ -821,16 +845,16 @@ the state rather than guessed at from outside it.
 -}
 pace : Model -> Float
 pace model =
-    case model.state of
-        Nothing ->
-            1000
-
-        Just state ->
+    case model.link of
+        Live state _ ->
             if state.busy /= Nothing || state.scanning || state.question /= Nothing then
                 1000
 
             else
                 4000
+
+        _ ->
+            1000
 
 
 main : Program () Model Msg
