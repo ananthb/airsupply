@@ -47,10 +47,22 @@ PAGE_TIMEOUT_ADVICE = (
 )
 
 
-# libairmini hands the pairing key back as hex. protocol.md records it as 64
-# characters; the bound is loose because the check is here to catch a status
-# string being stored as a key, not to pin a length we only half know.
+# libairmini answers a completed pairing with
+#     {"masterPairKey":"<64 hex>","sessionKey":"<64 hex>"}
+# built by snprintf into a `char res[160]` in airmini.c -- 5 bytes short of
+# the 165 that string needs. So what arrives is truncated at 159 characters,
+# with the closing quote and brace cut off, which is why it will not parse as
+# JSON and turns up here as a bare string.
+#
+# The key itself is unhurt: it ends at character 82, well inside what
+# survives. Only the tail of the session key is lost, and nothing here wants
+# that -- libairmini has already opened the session with it by this point.
+#
+# So read the key out of the text rather than requiring the JSON to be whole.
+# Reported upstream; this keeps working either way, since a fixed libairmini
+# produces a string this still matches.
 _PAIR_KEY = re.compile(r"[0-9a-fA-F]{32,128}")
+_PAIR_KEY_FIELD = re.compile(r'"masterPairKey"\s*:\s*"([0-9a-fA-F]{32,128})"')
 
 class Busy(Exception):
     pass
@@ -442,23 +454,38 @@ class Controller:
 def master_pair_key(result):
     """Pull the pairing key out of whatever libairmini handed back.
 
-    It answers `airmini_pair` with the key as a bare hex string rather than as
-    JSON, so session._decode cannot parse it and passes the text through
-    unchanged. The note this was written from described a
-    `{"masterPairKey": ...}` object, so take either shape.
+    Three shapes, because the one that actually arrives is a truncated
+    version of the one that was meant to: the object when the JSON survives,
+    the `masterPairKey` field lifted out of the text when it does not, and a
+    bare key on its own.
 
-    Checked rather than trusted: storing the wrong string is a reconnect that
-    fails every night from then on, and the failure would look like the
-    machine's fault. Never logged -- hold this and no PIN is ever needed
-    again, which is the whole point of it.
+    Checked rather than trusted, in every case. Storing something that is not
+    the key is a reconnect that fails every night afterwards and looks like
+    the machine's fault. Never logged: holding this is what makes a PIN
+    unnecessary, so it is as good as the PIN.
     """
-    candidate = result.get("masterPairKey") if isinstance(result, dict) else result
-    if not isinstance(candidate, str):
+    if isinstance(result, dict):
+        return _checked(result.get("masterPairKey"))
+    if not isinstance(result, str):
+        log.warning("The pairing result is a %s, which carries no key.", type(result).__name__)
+        return None
+
+    found = _PAIR_KEY_FIELD.search(result)
+    if found:
+        return _checked(found.group(1))
+    key = _checked(result.strip())
+    if key is None:
+        log.warning(
+            "No key in the pairing result: %d characters, no masterPairKey field, not hex.",
+            len(result),
+        )
+    return key
+
+
+def _checked(candidate):
+    if not isinstance(candidate, str) or not _PAIR_KEY.fullmatch(candidate.strip()):
         return None
     key = candidate.strip()
-    if not _PAIR_KEY.fullmatch(key):
-        log.warning("The pairing result is not a key: %d characters, not hex.", len(key))
-        return None
     log.info("Pairing returned a %d-character key.", len(key))
     return key
 
