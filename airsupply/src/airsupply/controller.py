@@ -128,6 +128,7 @@ class Controller:
     # --- lifecycle ---------------------------------------------------------
 
     async def start(self):
+        store.upgrade()
         handler = _PageLog(self.log)
         handler.setFormatter(logging.Formatter("%(message)s"))
         logging.getLogger().addHandler(handler)

@@ -67,9 +67,27 @@ def migrate(data):
     selected = data.get("selected")
     if selected:
         machines.setdefault(selected.upper(), {"name": "", "key": None, "person_id": None})
-    if machines:
-        log.info("Carried %d machine(s) over from the previous format.", len(machines))
     return {"version": VERSION, "machines": machines, "selected": selected}
+
+
+def upgrade():
+    """Write the file back in the current format, once, at start-up.
+
+    load() already upgrades whatever it reads, but only in memory -- so until
+    something happened to write, every read upgraded again, and the page polls
+    four times a minute. Saying so once and getting it on disk keeps it out of
+    the log and off the path of every poll.
+    """
+    try:
+        with open(PATH, "r", encoding="utf-8") as handle:
+            raw = json.load(handle)
+    except (OSError, json.JSONDecodeError):
+        return
+    if not isinstance(raw, dict) or raw.get("version") == VERSION:
+        return
+    carried = len(load()["machines"])
+    _edit(lambda data: None)
+    log.info("Upgraded %s, carrying %d machine(s) over.", PATH, carried)
 
 
 def save(data):

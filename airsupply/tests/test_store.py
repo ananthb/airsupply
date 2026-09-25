@@ -54,6 +54,34 @@ class Upgrade(StoreCase):
         self.assertEqual(2, again["version"])
         self.assertEqual("ab" * 32, self.store.master_pair_key("28:68:47:18:C2:78"))
 
+    def test_upgrade_puts_the_new_format_on_disk(self):
+        self.write(V1)
+        self.store.upgrade()
+        with open(self.path, encoding="utf-8") as handle:
+            self.assertEqual(2, json.load(handle)["version"])
+
+    def test_reading_never_says_anything(self):
+        # The bug this pins: load() upgraded in memory and announced it, and
+        # the page polls four times a minute, so the log filled with
+        # "carried 1 machine over" for ever.
+        self.write(V1)
+        self.store.upgrade()
+        with self.assertNoLogs("airsupply.store", level="INFO"):
+            for _ in range(5):
+                self.store.machines()
+                self.store.selected()
+                self.store.master_pair_key("28:68:47:18:C2:78")
+
+    def test_upgrading_twice_is_quiet_the_second_time(self):
+        self.write(V1)
+        self.store.upgrade()
+        with self.assertNoLogs("airsupply.store", level="INFO"):
+            self.store.upgrade()
+
+    def test_upgrade_leaves_a_file_that_was_never_written_alone(self):
+        self.store.upgrade()
+        self.assertFalse(os.path.exists(self.path))
+
     def test_rubbish_on_disk_does_not_take_the_add_on_down(self):
         with open(self.path, "w", encoding="utf-8") as handle:
             handle.write("{not json at all")

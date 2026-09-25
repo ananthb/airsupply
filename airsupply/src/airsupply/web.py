@@ -69,8 +69,27 @@ async def act(request):
     return await state(request)
 
 
+@web.middleware
+async def no_cache(request, handler):
+    """Nothing here is worth caching, and the page is worth not caching.
+
+    index.html said no-store and the compiled Elm did not, so a browser
+    holding yesterday's elm.js would run it against today's API. The state
+    gained a field, the old decoder did not know it, and the page died with
+    "the add-on is not answering" -- which is exactly the failure a strict
+    decoder is supposed to make loud, arriving from the one direction nobody
+    was watching.
+
+    An add-on on the same network sending 200KB again is not a cost worth
+    the risk of that.
+    """
+    response = await handler(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
+
+
 def make_app(controller):
-    app = web.Application()
+    app = web.Application(middlewares=[no_cache])
     app["ctl"] = controller
     app.add_routes([
         web.get("/", index),
