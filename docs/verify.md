@@ -38,14 +38,15 @@ bluetoothctl info <BD_ADDR>
 
 Record:
 
-- [ ] Does an AirMini appear? Its name and BD_ADDR.
+- [x] Does an AirMini appear? Its name and BD_ADDR. Yes; both are on the page.
 - [ ] **RSSI.** Anything worse than about −80 dBm will not hold a session.
-- [ ] Does `info` list `Serial Port (00001101-0000-1000-8000-00805f9b34fb)` in
+- [x] Does `info` list `Serial Port (00001101-0000-1000-8000-00805f9b34fb)` in
       its UUIDs? If not, `sdptool browse <BD_ADDR>` forces SDP — and unlike
       discovery, that is not blocked by Home Assistant's session. libairmini's
       notes put SPP on channel 5.
-- [ ] Does it report a **Class**? A Classic device has one; a pure BLE device
-      does not, so this doubles as confirmation of the transport.
+- [x] Does it report a **Class**? Yes. A Classic device has one and a pure
+      BLE device does not, so this doubles as confirmation of the transport;
+      the page marks it Classic on the strength of it.
 
 If it does not appear, or RSSI is poor, the add-on cannot own the link and the
 architecture changes: either a bridge in the bedroom, or the phone app becomes
@@ -85,7 +86,7 @@ descriptor** through `Profile1.NewConnection`, and `dbus-next` can receive Unix
 FDs. That fd is exactly the byte stream libairmini wants, obtained the
 BlueZ-blessed way.
 
-- [ ] Confirm `RegisterProfile` + `NewConnection` yields a usable fd for the
+- [x] Confirm `RegisterProfile` + `NewConnection` yields a usable fd for the
       AirMini specifically, rather than only for well-known SPP peers.
 
 **A correction worth keeping:** being unable to `scan off` while Home Assistant
@@ -146,16 +147,43 @@ nightstand, so experiment 1 and the first half of this one are answered: the
 Home Assistant host is in range, an add-on container can drive BlueZ, and the
 bond is reachable from the page.
 
-The boxes below still need the add-on's own log to fill in: which question
-BlueZ asked, whether SRP-6a returned a `masterPairKey`, and whether a later
-no-PIN reconnect works. Paste the Activity block from the page here, with the
-serial number removed.
+**Answered 2026-09-25 — the bond forms, the channel opens, and SRP-6a
+completes.** In order, from the add-on's own log:
 
-- [ ] Which link-layer question does the machine ask -- legacy PIN
-      (`RequestPinCode`), passkey confirmation, or none (just-works)? Record
-      what the page showed.
-- [ ] Does SRP-6a pairing complete, and is a `masterPairKey` returned?
-- [ ] Does a later no-PIN reconnect work with that key?
+```
+Bonding with <BD_ADDR>. Watch the machine and this page for a code.
+Bonded with <BD_ADDR>.                      1 second later
+Connecting serial profile...
+NewConnection from /org/bluez/hci0/dev_<BD_ADDR>
+  fd 9, properties {'Version': 256}
+Serial channel open on fd 9.
+Pairing with the machine via SRP-6a.
+Paired. State: session-open
+```
+
+- [x] **Which link-layer question does the machine ask?** None. No agent
+      method was called at all: the bond went from `Pair` to bonded in about a
+      second with nothing shown on the page and nothing typed. So the AirMini
+      does just-works SSP, and the agent exists for the case that never came.
+      Keep it -- a machine on older firmware may still ask -- but the answer
+      here is that the Bluetooth step needs no interaction beyond the button.
+- [x] **Does SRP-6a pairing complete, and is a `masterPairKey` returned?**
+      Yes to both, and the second half was being thrown away. libairmini
+      answers `airmini_pair` with the key as **bare hex, not JSON**, so
+      `session._decode` cannot parse it and passes the text through; the
+      controller looked only for a `{"masterPairKey": ...}` object, found a
+      string, and logged "No masterPairKey in the pairing result". The PIN was
+      therefore needed on every connection and the reconnect-on-start path
+      could never run. Fixed: either shape is accepted, and the value is
+      checked to be hex before it is stored.
+- [ ] **Does a later no-PIN reconnect work with that key?** Still open, and
+      only testable now that a key is kept. This is the next thing to try:
+      restart the add-on and watch for "Reconnecting with the stored pairing
+      key" followed by four reads, with nobody at the machine.
+
+Experiment 2 is confirmed live by the same log, having been answered from
+prior art: a `NewConnection` carrying a file descriptor arrived, and the
+AppArmor profile allowed it.
 
 ## 4. Does exactly one connection work at a time?
 
@@ -174,10 +202,75 @@ transport, framing, crypto backend, session — before anything is written.
 so a partial result is still a result. Paste its log here with serial numbers
 removed.
 
-- [ ] `GetVersion`
-- [ ] `GetDateTime`
-- [ ] `Get` — the therapy settings
-- [ ] `Get` — the run meters
+- [x] `GetVersion`
+- [x] `GetDateTime`
+- [x] `Get` — the therapy settings
+- [x] `Get` — the run meters
+
+**Answered 2026-09-25 — all four returned, first attempt.** Identifiers and
+the serial number are redacted; shapes and values are otherwise verbatim.
+
+`GetVersion` reports RPC **2.0** and, usefully, lists every method the
+firmware implements with its version:
+
+```
+ApplyAuthenticatedUpgrade 1.0   GetDateTime 1.0      InitiateUpgrade 1.0
+BtDisconnect 1.0                GetHistory 1.0       Set 1.0
+CheckUpgradeFile 1.0            GetLoggedData 1.0    StartStream 1.0
+DiscardPairKey 1.0              GetPairKey 1.0       SubscribeEvent 1.0
+EnterMaskFit 1.0                GetSessionKey 1.0    UpgradeDataBlock 1.0
+EnterStandby 1.0                GetVersion 2.0
+EnterTherapy 1.0                Get 1.0
+EraseData 1.0                   GenerateAuthCode 1.1
+```
+
+That answers a question nobody had thought to ask: `GetLoggedData`,
+`GetHistory` and `StartStream` are all present on this firmware, so the
+night's data and the 25 Hz stream are reachable and only the code to ask for
+them is missing. `Set` is there too, which is what experiment 6 is about.
+
+It also carries identification for two subsystems, `FlowGenerator` and
+`BluetoothModule`, each with hardware, product and software identifiers. The
+flow generator's software block is the interesting one:
+
+```
+ApplicationIdentifier       SW03900.01.4.0.3.50927
+BootloaderIdentifier        SW03901.00.3.0.0.48255
+ConfigurationIdentifier     CF03900.01.03.00.50927
+DataModelVersionIdentifier  1.0.0.270
+```
+
+`GetDateTime` is one field, UTC: `{"dateTime": "2026-09-25T12:13:15.405Z"}`.
+
+`Get` for the settings returns the live state alongside the stored profiles --
+`FGState: Standby`, `ActiveTherapyProfile: AutoSetProfile` -- then
+`FeatureProfiles` (auto ramp, comfort, EPR, smart start/stop) and three
+`TherapyProfiles`: `AutoSetProfile`, `AutoSetForHerProfile` and `CpapProfile`,
+each with its pressures and a `TherapyMode`. Pressures come back as floats in
+cmH2O, EPR pressure as an integer, and every switch as the strings `"On"` /
+`"Off"` / `"Auto"` rather than as booleans.
+
+`Get` for the run meters returns them as **ISO-8601 durations**, which is
+worth knowing before anyone tries to read one as a number:
+
+```
+MachineRunMeter                 PT2591392S   719 h 49 min
+MotorRunMeter                   PT2591392S
+MotorRunSinceLastServiceMeter   PT2591392S
+TherapyRunMeter                 PT2589645S   719 h 20 min
+LastTherapyUseDateTime          2026-09-25T06:26:51.000Z
+LastEraseDataDateTime           null
+```
+
+Machine, motor and since-service meters are identical, so this machine has
+never been serviced and has never been idle-but-powered for long; therapy run
+trails machine run by 1747 s, about 29 minutes across its whole life.
+
+So the stack is proved end to end -- transport, framing, CRC, SRP-6a, the
+AES-256-CBC session and the read path -- on hardware other than the one
+libairmini was recovered from. The remaining reads and experiment 6 are the
+open ones.
+
 - [ ] `GetLoggedData`, `GetHistory` for a real night — not yet in the add-on
 - [ ] `StartStream` — 25 Hz flow and pressure — not yet in the add-on
 
