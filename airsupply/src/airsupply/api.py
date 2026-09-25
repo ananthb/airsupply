@@ -201,13 +201,27 @@ def scalar(value):
     return str(value)
 
 
-def duration(value):
-    """"PT2591392S" is a run meter. Hours are how a CPAP quotes one."""
+def seconds(value):
+    """An ISO-8601 duration as a number, or None if it is not one.
+
+    The run meters arrive as "PT2591392S". This is the same parse the page's
+    label uses, kept separate because an entity wants the number and a person
+    wants the hours.
+    """
+    if not isinstance(value, str):
+        return None
     match = _DURATION.fullmatch(value)
     if not match or not any(match.groups()):
         return None
-    days, hours, minutes, seconds = (float(g or 0) for g in match.groups())
-    total = int(days * 86400 + hours * 3600 + minutes * 60 + seconds)
+    days, hours, minutes, secs = (float(g or 0) for g in match.groups())
+    return int(days * 86400 + hours * 3600 + minutes * 60 + secs)
+
+
+def duration(value):
+    """"PT2591392S" is a run meter. Hours are how a CPAP quotes one."""
+    total = seconds(value)
+    if total is None:
+        return None
     if total < 3600:
         return f"{total // 60} min"
     return f"{total // 3600} h {total % 3600 // 60:02d} min"

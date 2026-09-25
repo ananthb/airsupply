@@ -105,7 +105,7 @@ ENV PYTHONPATH="/usr/src" \
 # and the state the page decodes has to still carry every field it decodes.
 RUN python3 -m compileall -q /usr/src \
     && python3 -c 'import ctypes; ctypes.CDLL("/usr/lib/libairmini.so").airmini_crypto_openssl' \
-    && python3 -c 'import dbus_next, aiohttp, airsupply.airmini, airsupply.bluez, airsupply.api, airsupply.web' \
+    && python3 -c 'import dbus_next, aiohttp, aiomqtt, airsupply.airmini, airsupply.bluez, airsupply.api, airsupply.entities, airsupply.hass, airsupply.mqtt, airsupply.web' \
     && test -s /usr/src/airsupply/static/index.html \
     && test -s /usr/src/airsupply/static/assets/elm.js \
     && python3 -m unittest discover -s /tmp/tests -q \
