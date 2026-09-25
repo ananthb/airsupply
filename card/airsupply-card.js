@@ -60,17 +60,10 @@ class AirsupplyCard extends HTMLElement {
     this._render();
   }
 
-  /* Whose machine this is, and whether that is whoever is looking.
+  /* Hidden unless the viewer is the machine's owner.
    *
-   * The add-on puts the owner's Home Assistant user id on every entity, so
-   * the card follows the person assigned to the machine rather than needing
-   * user ids typed into dashboard YAML: reassign the machine and the card
-   * moves with it.
-   *
-   * This hides a card. It is not a permission -- Home Assistant has no
-   * per-entity access control, so anybody logged in can still read the
-   * sensors from developer tools or the API. It keeps somebody else's
-   * therapy off your dashboard; it does not keep it from them.
+   * The owner's user id rides on every entity, so the card follows the
+   * assignment rather than hard-coded ids. Unassigned stays visible.
    */
   _hidden() {
     if (!this._config?.only_owner) return false;
